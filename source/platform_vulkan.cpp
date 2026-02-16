@@ -85,7 +85,6 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VULKAN_LOGF( "Allocated {} bytes in driver", bytes );
         VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
         VULKAN_LOGF( "Allocation Address: {} ", result_ );
-        // VULKAN_LOGF( "Memory Statistics {}", impl->get_memory_statistics() );
 
         return result_;
     };
@@ -98,11 +97,20 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VkSystemAllocationScope scope
     )
     {   i_allocator* impl = ptr_cast<i_allocator*>( context );
-        // TYON_BREAK();
-        void* result_ = impl->allocate_relocate( original, alignment );
+        /* Stupid API convention mandated by the Vulkan spec
+
+           DOCUMENTATION: If pOriginal is NULL, then pfnReallocation must behave equivalently
+           to a call to PFN_vkAllocationFunction with the same parameter values
+           (without pOriginal). */
+        void* result_ = (original ? impl->allocate_relocate( original, alignment ) :
+                         impl->allocate_raw( bytes, alignment ) );
+
         VULKAN_LOGF( "Reallocated {} bytes in driver", bytes );
         VULKAN_LOGF( "\tReallocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
         VULKAN_LOGF( "Re-allocation Address: {} ", original );
+        if (result_ == nullptr)
+        {   TYON_BREAK();
+        }
         return result_;
     };
 
@@ -122,7 +130,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VkSystemAllocationScope scope
     )
     {
-        VULKAN_LOG( "Allocation Request Event" );
+        VULKAN_LOG( "Internal Allocation Event" );
         VULKAN_LOGF( "\tAllocator Address: {}", (void*)(context) );
         VULKAN_LOGF( "\tAllocation Type: {} ", string_VkInternalAllocationType(type) );
         VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
@@ -135,7 +143,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VkSystemAllocationScope scope
     )
     {
-        VULKAN_LOG( "Deallocation Request Event" );
+        VULKAN_LOG( "Internal Deallocation Event" );
         VULKAN_LOGF( "\tAllocator Address: {}", (void*)(context) );
         VULKAN_LOGF( "\tAllocation Type: {} ", string_VkInternalAllocationType(type) );
         VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
@@ -1179,10 +1187,14 @@ PROC vulkan_init() -> fresult
     i32& graphics_queue_family = self->graphics_queue_family;
     i32& present_queue_family = self->present_queue_family;
 
+    // memory_stack_allocator tmp_allocator;
     g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
         g_vulkan->allocator.get() );
+    // g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
+        // &tmp_allocator );
     // TODO: Remove Vulkan allocaotr temporarily
-    g_vulkan->vk_allocator = nullptr;
+    // g_vulkan->vk_allocator = nullptr;
+    g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
 
     defer_procedure _exit = [&result] {
         if (result)
