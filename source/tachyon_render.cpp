@@ -146,6 +146,35 @@ PROC mesh_init( mesh* arg ) -> fresult
     return true;
 }
 
+PROC mesh_bounding_box_3d( mesh* arg ) -> box_3d
+{
+    return {};
+}
+
+PROC mesh_bounding_box_2d( mesh* arg ) -> box_2d
+{
+    box_2d result;
+    f32 up = 0.0;
+    f32 down = 0.0;
+    f32 left = 0.0;
+    f32 right = 0.0;
+    // TODO: hardcoded for screen camera coordinates
+    arg->vertexes.map_procedure( [&] (v3 arg) {
+        // Iterate over and find the furthest extents of the mesh
+        right = (arg.y > right ? arg.y : right);
+        left  = (arg.y < left  ? arg.y : left);
+        up    = (arg.z < up    ? arg.z : up);
+        down  = (arg.z > down  ? arg.z : down);
+    } );
+    f32 left_right_distance = (up - down);
+    f32 up_down_distance = (left - down);
+    // NOTE: Whatever you pick make sure you subtract from left argument of the distance calculation
+    result.size.x = absolute(left_right_distance);
+    result.size.y = absolute(up_down_distance);
+    result.position.x = (left - left_right_distance);
+    result.position.y = (up - up_down_distance);
+    return result;
+}
 
 matrix scene_camera::create_perspective_projection()
 {

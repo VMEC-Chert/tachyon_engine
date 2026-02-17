@@ -163,8 +163,8 @@ struct text_drawable
     sdl::TTF_Font* font = nullptr;
     rgba color = rgba{.hex = 0xFFFFFF };
     rgba background_color;
-    vec2 bounding_box;
-    vec2 rendered_size;
+    v2_f32 bounding_box;
+    v2_f32 rendered_size;
     f32 size_pt = 0.0f;
     f32 size_rendered_pt = 0.0f;
     uid base_widget;
@@ -205,6 +205,10 @@ struct ui_interactable
     [=context]() { context->member = bar; } */
     uid widget;
     generic_procedure<void()> tick;
+    /** NOTE: We'll do a collision on the saved bounding box of the widget's
+        geometry, then later do complex collision for accuracy.
+
+        TODO: We can look at disabling complex collision later but I don't think it'll be needed */
 };
 
 /** Base UI component
@@ -223,7 +227,7 @@ struct ui_widget
     /// What order to draw widgets in, default to drawing child widgets above parents
     /// Lower depth values are more likely to draw above other widgets
     i32 depth = 0;
-    vec2 box_size = 0;
+    box_2d bounding_box;
 
     /** Transform to apply to the widget
 
@@ -273,9 +277,9 @@ struct ui_widget
     get_root_transform();
 
     bool
-    point_collision( vec2 point );
+    point_collision( v2_f32 point );
 
-    vec2
+    v2_f32
     get_pin_position();
 };
 
@@ -333,17 +337,17 @@ struct ui_frame
     f_mouse_button mouse_button_state;
     f_mouse_button mouse_button_single_press;
 
-    vec2 window_size = 0;
-    vec2 window_halfsize = 0;
+    v2_f32 window_size = 0;
+    v2_f32 window_halfsize = 0;
 
     time_monotonic tooltip_hover_time = time_now();
-    vec2 cursor;
-    vec2 cursor_canvas;
+    v2_f32 cursor;
+    v2_f32 cursor_canvas;
     f32 canvas_scale;
-    vec2 canvas_position;
-    vec2 canvas_origin = 0;
-    vec2 mouse_delta = 0;
-    vec2 mouse_delta_canvas = 0;
+    v2_f32 canvas_position;
+    v2_f32 canvas_origin = 0;
+    v2_f32 mouse_delta = 0;
+    v2_f32 mouse_delta_canvas = 0;
     f32 scroll_x = 0;
     f32 scroll_y = 0;
     // if scroll has been read this frame
@@ -452,6 +456,12 @@ struct entity_type_definition<ui_drawable_widget>
     {
         if (arg->active == false)
         {   return; }
+
+        // SECTION: Regenerate appropriate variables
+        ui_widget* widget = entity_search<ui_widget>( arg->widget ).copy_default(nullptr);
+        // TODO: Cache this result for high poly geometry
+        widget->bounding_box = mesh_bounding_box_2d( &arg->drawable.geometry );
+
         // Queue the drawable for drawing
         g_render->draw_queue_mesh.push_tail( &arg->drawable.geometry );
     }
@@ -465,7 +475,20 @@ PROC ui_init() -> fresult;
 PROC ui_tick() -> void;
 PROC ui_destroy() -> void;
 PROC ui_destroy() -> void;
-PROC ui_frame_start() -> void;
-PROC ui_frame_end() -> void;
+
+/** NOTE: The tick  is broken into frame_start and frame_end  because there is a
+ lot of  boilerplate that goes  at the start  and end of  the tick that  is very
+ boilerplatey and doesn't need  to be looked at much, but  is very important and
+ order  dependant  and  mustn't  be   confused  with  other  code.  Like  memory
+ management, defragmentation,  and clearing old  state, getting events  from the
+ OS- etc. */
+
+PROC ui_tick_start() -> void;
+PROC ui_tick_end() -> void;
+
+/** Does a collision to test if a point falls inside a bounding box.
+
+ NOTE: That box size uses center origin box coordinates*/
+PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool;
 
 }

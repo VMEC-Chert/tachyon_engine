@@ -119,4 +119,9 @@ PROC render_tick() -> void;
 
 PROC mesh_init( mesh* arg ) -> fresult;
 
+PROC mesh_bounding_box_3d( mesh* arg ) -> box_3d;
+
+/** Find the extents of the pre-transformed mesh in screen camera coordinates */
+PROC mesh_bounding_box_2d( mesh* arg ) -> box_2d;
+
 }

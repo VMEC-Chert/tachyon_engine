@@ -38,7 +38,13 @@ namespace tyon
     PROC ui_tick() -> void
     {
         PROFILE_SCOPE_FUNCTION();
+        ui_tick_start();
+
         entity_tick_all<ui_drawable_widget>();
+        // Test code
+        // if (ui_point_box_collision())
+
+        ui_tick_end();
     }
 
     PROC ui_destroy() -> void
@@ -47,14 +53,27 @@ namespace tyon
         TYON_LOG( "UI Destroyed" );
     }
 
-    PROC ui_frame_start() -> void
+    PROC ui_tick_start() -> void
+    {
+        PROFILE_SCOPE_FUNCTION();
+        g_ui->frame.input = g_ui->input;
+    }
+
+    PROC ui_tick_end() -> void
     {
         PROFILE_SCOPE_FUNCTION();
     }
 
-    PROC ui_frame_end() -> void
+    PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool
     {
-        PROFILE_SCOPE_FUNCTION();
+        // Clip means "inside of x extent"
+        // ie "point is inside left extent"
+        v2_f32 halfsize = box_size / 2.0f;
+        bool left_clip  = (point.x > box_pos.x - halfsize.x);
+        bool right_clip = (point.x < box_pos.x + halfsize.x);
+        bool up_clip    = (point.y < box_pos.y + halfsize.y);
+        bool down_clip  = (point.y > box_pos.y + halfsize.y);
+        return (left_clip && right_clip && up_clip && down_clip);
     }
 
 }
