@@ -980,7 +980,7 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
     // Create memory entry
     vulkan_device_memory_entry entry;
     entry.buffer = buffer->buffer;
-    entry.position = arg->head_size + binary_padding( requirements.alignment, arg->head_size );
+    entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
     entry.size = buffer->size;
     entry.alignment = requirements.alignment;
     entry.usage_flag = buffer->type;

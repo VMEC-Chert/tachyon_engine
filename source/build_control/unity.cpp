@@ -12,7 +12,7 @@
 
 #if (TYON_LIB_MERGED_UNITY)
     #include "../../external/tachyon_lib/source/build_control/tachyon_lib_unity_core.cpp"
-#endif TYON_ENGINE_UNITY_BUILD
+#endif // TYON_ENGINE_UNITY_BUILD
 
 // #include "external/lua/onelua.c"
 

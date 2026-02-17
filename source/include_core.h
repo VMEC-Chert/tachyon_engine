@@ -72,7 +72,19 @@
 /** --Vendored Dependencies-- */
 #include "include_tracy.h"
 
-#include "../external/tachyon_lib/source/include_tachyon_lib_core.h"
+/* NOTE: Sometimes you may want to manage certain dependencies seperately from
+   this repository.  If this is the case you can set this to 1 and the
+   dependencies will use standard search paths instead. */
+#ifndef TYON_COMPILER_MANAGED_INCLUDES
+    #define TYON_COMPILER_MANAGED_INCLUDES 0
+#endif
+
+#if (TYON_COMPILER_MANAGED_INCLUDES)
+    #include <include_tachyon_lib_core.h>
+#else
+    #include "../external/tachyon_lib/source/include_tachyon_lib_core.h"
+#endif // TYON_COMPILER_MANAGED_INCLUDES
+
 #include "core.hpp"
 
 #include "global.h"
