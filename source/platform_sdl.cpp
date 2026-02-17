@@ -211,6 +211,16 @@ namespace tyon
                     }
                     break;
                 }
+                case SDL_EVENT_MOUSE_MOTION:
+                {
+                    SDL_MouseMotionEvent e;
+                    g_ui->frame.input.mouse_update_time = e.timestamp;
+                    g_ui->frame.input.mouse_window = v2_f32{ e.x, e.y };
+                    g_ui->frame.input.mouse_delta = v2_f32{ e.xrel, e.yrel };
+                    /* timestamp, windowID, SDL_MouseID which (unique mouse id),
+                          SDL_MouseButtonFlags state, x, y, xrel, yrel */
+                    break;
+                }
                 default:
                 {
                     // break;

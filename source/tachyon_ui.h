@@ -192,6 +192,21 @@ struct ui_drawable
     mesh geometry;
 };
 
+struct ui_interactable
+{
+    /* NOTE: Any important actions like event signals, hover checks will happen
+     * inside the function itself. This will then bind to an 'action' which will
+     * hold a user facing job.
+
+     You can provide a context struct/pointer by using the
+     generic_procedure.assign_closure() function.  Or alternatively a lambda with
+     a capture, if you prefer
+
+    [=context]() { context->member = bar; } */
+    uid widget;
+    generic_procedure<void()> tick;
+};
+
 /** Base UI component
  *
  * Widgets have an id, a parent widget, a tarnsform, and a drawable. Widgets
@@ -281,9 +296,38 @@ struct ui_layout
     f32 radial_distance;
 };
 
+struct ui_font
+{
+    sdl::TTF_Font* platform_font;
+    f32 size_points = 0.0;
+};
+
+/** Very basic widget type only for displaying graphics on.
+
+ NOTE: Previously I tried to give every widgeto a drawable but honestly it just
+overloads the meaning of a widget and made the object really bloated and
+unweidly to manage. This v2 iteration of the UI will split each thing into it's
+own unique struct and use ui_widget as a spatial positioning tool */
+struct ui_drawable_widget
+{
+    uid id;
+    fstring name;
+    uid widget;
+    ui_drawable drawable;
+    bool active = true;
+};
+
+struct ui_input_state
+{
+    time_date_ns mouse_update_time;
+    v2_f32 mouse_delta = 0;
+    v2_f32 mouse_window = 0;
+};
+
+/** A snapshot of data take at the start of a UI tick */
 struct ui_frame
 {
-    array<ui_drawable> draw_queue;
+    ui_input_state input;
     vector<u8> scancode_states;
     vector<u8> scancode_single_press;
     f_mouse_button mouse_button_state;
@@ -306,32 +350,16 @@ struct ui_frame
     bool scroll_consumed = false;
 };
 
-struct ui_font
-{
-    sdl::TTF_Font* platform_font;
-    f32 size_points = 0.0;
-};
-
-/** Very basic widget type only for displaying graphics on.
-
- NOTE: Previously I tried to give every widgeto a drawable but honestly it just
-overloads the meaning of a widget and made the object really bloated and
-unweidly to manage. This v2 iteration of the UI will split each thing into it's
-own unique struct and use ui_widget as a spatial positioning tool */
-struct ui_drawable_widget
-{
-    uid id;
-    fstring name;
-    uid widget;
-    ui_drawable drawable;
-    bool active = true;
-};
-
 struct ui_context
 {
     entity_uid<ui_widget> canvas;
     memory_heap_allocator permanant;
     ui_font default_font;
+    // Dynamically updating window state
+    ui_input_state input;
+
+    ui_frame frame_prev;
+    ui_frame frame;
 };
 
 extern ui_context* g_ui;
