@@ -83,7 +83,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         i_allocator* impl = ptr_cast<i_allocator*>( context );
         void* result_ = impl->allocate_raw( bytes, alignment );
         VULKAN_LOGF( "Allocated {} bytes in driver", bytes );
-        VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
+        VULKAN_LOGF( "\tAllocation Scope: {} ", string_VkSystemAllocationScope(scope) );
         VULKAN_LOGF( "Allocation Address: {} ", result_ );
 
         return result_;
@@ -106,7 +106,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
                          impl->allocate_raw( bytes, alignment ) );
 
         VULKAN_LOGF( "Reallocated {} bytes in driver", bytes );
-        VULKAN_LOGF( "\tReallocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
+        VULKAN_LOGF( "\tAllocation Scope: {} ", string_VkSystemAllocationScope(scope) );
         VULKAN_LOGF( "Re-allocation Address: {} ", original );
         if (result_ == nullptr)
         {   TYON_BREAK();
@@ -120,6 +120,8 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
     )
     {   i_allocator* impl = ptr_cast<i_allocator*>( context );
         impl->deallocate( address );
+        VULKAN_LOG( "Deallocated data in driver" );
+        VULKAN_LOGF( "\tAddress: {} ", address );
     };
 
     // Allocation Notification
@@ -1187,14 +1189,11 @@ PROC vulkan_init() -> fresult
     i32& graphics_queue_family = self->graphics_queue_family;
     i32& present_queue_family = self->present_queue_family;
 
-    // memory_stack_allocator tmp_allocator;
     g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
         g_vulkan->allocator.get() );
-    // g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
-        // &tmp_allocator );
-    // TODO: Remove Vulkan allocaotr temporarily
-    // g_vulkan->vk_allocator = nullptr;
-    g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
+    // TODO: Remove Vulkan allocate temporarily
+    g_vulkan->vk_allocator = nullptr;
+    // g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
 
     defer_procedure _exit = [&result] {
         if (result)
@@ -1205,7 +1204,6 @@ PROC vulkan_init() -> fresult
             g_vulkan->resources.~resource_arena();
         }
     };
-
 
     // Enumerate intance layers
     u32 n_layers = 0;
@@ -1405,6 +1403,30 @@ PROC vulkan_init() -> fresult
             dedicated_graphics = true;
             VULKAN_LOG( "    Device Type: Discrete GPU");
         }
+
+            // Enumerate Device Extensions
+        // TODO: Search through instance layers
+        array<cstring> layer_names;
+        array<VkExtensionProperties> device_extensions;
+        u32 extensions_n = 0;
+        vkEnumerateDeviceExtensionProperties(
+            x_device, nullptr, &extensions_n, nullptr );
+        device_extensions.resize( extensions_n );
+        vkEnumerateDeviceExtensionProperties(
+            x_device, nullptr, &extensions_n, device_extensions.data );
+        VULKAN_LOG( "Enumerating Device Extensions: " );
+        bool swapchain_khr_support = false;
+        device_extensions.map_procedure( [&swapchain_khr_support] (VkExtensionProperties& arg) {
+            if (arg.extensionName == "VK_KHR_swapchain"s)
+            {   swapchain_khr_support = true;
+            }
+            VULKAN_LOGF( "    {} {}.{}.{}",
+                         arg.extensionName,
+                         VK_API_VERSION_MAJOR( arg.specVersion ),
+                         VK_API_VERSION_MINOR( arg.specVersion ),
+                         VK_API_VERSION_PATCH( arg.specVersion ))});
+        VULKAN_LOG( "" );
+        VULKAN_LOGF( "VK_KHR_swapchain support: {}", swapchain_khr_support );
 
         array<VkQueueFamilyProperties> families;
         u32 n_families = 0;
