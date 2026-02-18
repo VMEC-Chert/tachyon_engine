@@ -7,3 +7,6 @@
 [submodule "external/opengl"]
 	path = external/opengl
 	url = https://github.com/KhronosGroup/OpenGL-Registry.git
+[submodule "external/vulkan_headers"]
+	path = external/vulkan_headers
+	url = https://github.com/VMEC-Chert/Vulkan-Headers.git
