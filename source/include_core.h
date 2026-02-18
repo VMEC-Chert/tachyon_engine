@@ -37,7 +37,8 @@
 #pragma clang diagnostic ignored "-Wkeyword-macro"
 
 // Dumb fix for C++ conflict
-// TODO: Testing manual fix on the header
+#define VK_VMEC_APPLY_MODULE_FIX 1
+
 /* #define module vk_module */
 // Enable Assistance with loading function pointers from hpp
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1

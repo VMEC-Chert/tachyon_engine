@@ -10,3 +10,6 @@
 [submodule "external/vulkan_headers"]
 	path = external/vulkan_headers
 	url = https://github.com/VMEC-Chert/Vulkan-Headers.git
+[submodule "external/vulkan_utilities"]
+	path = external/vulkan_utilities
+	url = https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git
