@@ -23,13 +23,16 @@ namespace tyon
         font.platform_font = noto_sans;
         font.size_points = 16.0;
 
+        entity_type_register<ui_widget>();
         entity_type_register<ui_drawable_widget>();
         ui_drawable_widget* test_status_bar = entity_allocate<ui_drawable_widget>();
         test_status_bar->drawable.geometry = {
             .name = "test_status_bar",
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
         };
+        test_status_bar->widget = entity_allocate<ui_widget>()->id;
         mesh_init( &test_status_bar->drawable.geometry );
+        entity_init( test_status_bar );
         TYON_LOG( "UI Initialized" );
 
         return true;

@@ -237,7 +237,7 @@ struct ui_widget
        NOTE: This used to be duplicate on the drawable this this is completely pointless honestly. */
     transform_3d transform;
 
-    /// Where to place origin based on extents of the parent's box
+    /// Where to place origin based on extents of the parent's bounding box
     e_ui_anchor anchor = e_ui_anchor::center;
     /// What part of box to treat as the origin
     e_ui_anchor origin_anchor = e_ui_anchor::center;
@@ -251,6 +251,7 @@ struct ui_widget
     bool inherit_transform = true;
     bool inherit_scale = true;
     bool inherit_rotation = true;
+    // TODO: move me
     /// Don't allow scales that have unmatched forward/up/right components
     bool preserve_aspect_ratio = true;
 
@@ -421,7 +422,7 @@ struct entity_type_definition<ui_widget>
         *arg = {};
     }
 
-    PROC tick() -> void
+    PROC tick( t_entity* arg ) -> void
     {}
 
     static PROC context_tick( void* context ) -> void
@@ -445,6 +446,11 @@ struct entity_type_definition<ui_drawable_widget>
 
     PROC init( t_entity* arg ) -> fresult
     {
+        ui_widget* widget = entity_allocate<ui_widget>();
+        // TODO: Working on
+        // widget
+        entity_init( widget);
+
         return false;
     }
     PROC destroy( t_entity* arg ) -> void
@@ -459,6 +465,9 @@ struct entity_type_definition<ui_drawable_widget>
 
         // SECTION: Regenerate appropriate variables
         ui_widget* widget = entity_search<ui_widget>( arg->widget ).copy_default(nullptr);
+        if (widget == nullptr)
+        {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
+        }
         // TODO: Cache this result for high poly geometry
         widget->bounding_box = mesh_bounding_box_2d( &arg->drawable.geometry );
 
