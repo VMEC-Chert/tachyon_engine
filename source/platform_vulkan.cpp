@@ -1198,6 +1198,7 @@ PROC vulkan_init() -> fresult
     PROFILE_SCOPE_FUNCTION();
     fresult result = false;
     g_vulkan = memory_allocate<vulkan_context>( 1 );
+
     g_vulkan->allocator = &g_vulkan->default_allocator;
 
     auto self = g_vulkan;
@@ -1209,9 +1210,13 @@ PROC vulkan_init() -> fresult
 
     g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
         g_vulkan->allocator );
-    // TODO: Remove Vulkan allocate temporarily
-    g_vulkan->vk_allocator = nullptr;
-    g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
+
+    // Use command line argument to see if to disable custom allocator
+    auto allocator_arg = g_library->cmdline_arguments.linear_search(
+        []( cmdline_argument& arg ) {
+            return arg.name == "vulkan_disable_custom_allocator"; });
+    if (allocator_arg.match_found == false)
+    {   g_vulkan->vk_allocator = &g_vulkan->allocator_callback; }
 
     defer_procedure _exit = [&result] {
         if (result)
