@@ -174,7 +174,7 @@ PROC vulkan_label_object( u64 handle, VkObjectType type, fstring name ) -> void
     PROFILE_SCOPE_FUNCTION();
     // NOTE: This is the depreceated version of the struct/function, this crashed when I used it.
     // VkDebugMarkerObjectNameInfoEXT name_args {};
-    char* s = memory_allocate_raw( name.size() );
+    char* s = memory_allocate_raw( name.size() + 1 );
     name.copy( s, name.size(), 0 );
     VkDebugUtilsObjectNameInfoEXT name_args {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
