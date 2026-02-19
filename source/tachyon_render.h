@@ -113,6 +113,9 @@ struct render_context
 
 extern render_context* g_render;
 
+/** Threaded entry point */
+PROC render_thread() -> void;
+
 PROC render_init() -> void;
 
 PROC render_tick() -> void;

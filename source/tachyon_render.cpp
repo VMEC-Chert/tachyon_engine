@@ -8,6 +8,13 @@ render_context* g_render = nullptr;
 
 platform_subsystem* sdl = nullptr;
 
+PROC render_thread() -> void
+{
+    render_init();
+    render_tick();
+    thread_init_self()
+}
+
 PROC render_init() -> void
 {
     PROFILE_SCOPE_FUNCTION();
@@ -103,6 +110,7 @@ PROC render_tick() -> void
 {
     PROFILE_SCOPE_FUNCTION();
     // SECTION: Reset data for new frame
+    g_thread->scratch.blank_all();
     g_render->draw_queue_mesh.reset();
 
     sdl->tick();

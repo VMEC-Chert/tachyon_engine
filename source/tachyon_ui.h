@@ -481,6 +481,8 @@ struct entity_type_definition<ui_drawable>
 
 };
 
+using widget_tree = n_tree<widget*>;
+
 PROC ui_init() -> fresult;
 PROC ui_tick() -> void;
 PROC ui_destroy() -> void;
@@ -501,5 +503,6 @@ PROC ui_tick_end() -> void;
  NOTE: That box size uses center origin box coordinates*/
 PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool;
 
+PROC ui_widget_construct_tree() -> widget_tree;
 
 }
