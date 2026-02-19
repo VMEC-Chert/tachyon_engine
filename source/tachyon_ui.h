@@ -309,7 +309,7 @@ struct ui_font
 
 /** Very basic widget type only for displaying graphics on.
 
- NOTE: Previously I tried to give every widgeto a drawable but honestly it just
+ NOTE: Previously I tried to give every widget a drawable but honestly it just
 overloads the meaning of a widget and made the object really bloated and
 unweidly to manage. This v2 iteration of the UI will split each thing into it's
 own unique struct and use ui_widget as a spatial positioning tool */

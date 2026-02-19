@@ -99,15 +99,23 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
     {   i_allocator* impl = ptr_cast<i_allocator*>( context );
         /* Stupid API convention mandated by the Vulkan spec
 
-           DOCUMENTATION: If pOriginal is NULL, then pfnReallocation must behave equivalently
+           OFFICIAL DOCUMENTATION: If pOriginal is NULL, then pfnReallocation must behave equivalently
            to a call to PFN_vkAllocationFunction with the same parameter values
-           (without pOriginal). */
-        void* result_ = (original ? impl->allocate_relocate( original, alignment ) :
-                         impl->allocate_raw( bytes, alignment ) );
+           (without pOriginal).
 
-        VULKAN_LOGF( "Reallocated {} bytes in driver", bytes );
-        VULKAN_LOGF( "\tAllocation Scope: {} ", string_VkSystemAllocationScope(scope) );
-        VULKAN_LOGF( "Re-allocation Address: {} ", original );
+           If size is zero, then pfnReallocation must behave equivalently to a
+           call to PFN_vkFreeFunction with the same pUserData parameter value,
+           and pMemory equal to pOriginal. */
+        void* result_ = nullptr;
+        if (original)
+        {   if (bytes == 0) {   impl->deallocate( original ); }
+            else { result_ = impl->allocate_relocate( original, alignment ); }
+        }
+        else { result_ = impl->allocate_raw( bytes, alignment ); }
+
+        VULKAN_LOGF( "Reallocated {:>10} bytes in driver", bytes );
+        VULKAN_LOGF( "Allocation Scope: {:>10} ", string_VkSystemAllocationScope(scope) );
+        VULKAN_LOGF( "Re-allocation Address: {:>10} ", original );
         if (result_ == nullptr)
         {   TYON_BREAK();
         }
@@ -118,10 +126,14 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         void* context,
         void* address
     )
-    {   i_allocator* impl = ptr_cast<i_allocator*>( context );
+    {
+        /* OFFICIAL DOCUMENTATION: pMemory  may be NULL,  which the callback  must handle
+           safely.  If pMemory  is non-NULL,  it  must be  a pointer  previously
+           allocated by pfnAllocation or pfnReallocation. The application should
+           free this memory. */
+        i_allocator* impl = ptr_cast<i_allocator*>( context );
         impl->deallocate( address );
-        VULKAN_LOG( "Deallocated data in driver" );
-        VULKAN_LOGF( "\tAddress: {} ", address );
+        VULKAN_LOGF( "Deallocated data in driver    Address: {:>10} ", address );
     };
 
     // Allocation Notification
@@ -133,9 +145,9 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
     )
     {
         VULKAN_LOG( "Internal Allocation Event" );
-        VULKAN_LOGF( "\tAllocator Address: {}", (void*)(context) );
-        VULKAN_LOGF( "\tAllocation Type: {} ", string_VkInternalAllocationType(type) );
-        VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
+        VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
+        VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
+        VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
     };
 
     result.pfnInternalFree = [](
@@ -146,9 +158,9 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
     )
     {
         VULKAN_LOG( "Internal Deallocation Event" );
-        VULKAN_LOGF( "\tAllocator Address: {}", (void*)(context) );
-        VULKAN_LOGF( "\tAllocation Type: {} ", string_VkInternalAllocationType(type) );
-        VULKAN_LOGF( "\tAllocated Bytes: {} ", string_VkSystemAllocationScope(scope) );
+        VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
+        VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
+        VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
     };
     return result;
 }
@@ -1193,7 +1205,7 @@ PROC vulkan_init() -> fresult
         g_vulkan->allocator.get() );
     // TODO: Remove Vulkan allocate temporarily
     g_vulkan->vk_allocator = nullptr;
-    // g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
+    g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
 
     defer_procedure _exit = [&result] {
         if (result)
