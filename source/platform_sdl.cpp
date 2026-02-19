@@ -213,7 +213,7 @@ namespace tyon
                 }
                 case SDL_EVENT_MOUSE_MOTION:
                 {
-                    SDL_MouseMotionEvent e;
+                    SDL_MouseMotionEvent e = x_event.motion;
                     g_ui->frame.input.mouse_update_time = e.timestamp;
                     g_ui->frame.input.mouse_window = v2_f32{ e.x, e.y };
                     g_ui->frame.input.mouse_delta = v2_f32{ e.xrel, e.yrel };
