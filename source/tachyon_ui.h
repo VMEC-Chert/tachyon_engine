@@ -180,18 +180,6 @@ struct text_drawable
     bool wrapped = false;
 };
 
-struct ui_drawable
-{
-    e_ui_drawable type = e_ui_drawable::none;
-    image<rgba> image_;
-    // vector_image vector;
-    text_drawable text;
-    // Base colour for untextured meshes, text, or tint
-    rgba color;
-    /// All drawables must be backed by a mesh unless using raw image copies.
-    mesh geometry;
-};
-
 struct ui_interactable
 {
     /* NOTE: Any important actions like event signals, hover checks will happen
@@ -313,13 +301,22 @@ struct ui_font
 overloads the meaning of a widget and made the object really bloated and
 unweidly to manage. This v2 iteration of the UI will split each thing into it's
 own unique struct and use ui_widget as a spatial positioning tool */
-struct ui_drawable_widget
+struct ui_drawable
 {
     uid id;
     fstring name;
     uid widget;
-    ui_drawable drawable;
     bool active = true;
+
+    e_ui_drawable type = e_ui_drawable::none;
+    image<rgba> image_;
+    // vector_image vector;
+    text_drawable text;
+    // Base colour for untextured meshes, text, or tint
+    rgba color;
+    /// All drawables must be backed by a mesh unless using raw image copies.
+    mesh geometry;
+
 };
 
 struct ui_input_state
@@ -434,11 +431,11 @@ struct entity_type_definition<ui_widget>
 };
 
 template<>
-struct entity_type_definition<ui_drawable_widget>
+struct entity_type_definition<ui_drawable>
 {
-    using t_entity = ui_drawable_widget;
+    using t_entity = ui_drawable;
     using t_context = entity_type_context<t_entity>;
-    static constexpr cstring name = "tyon::ui_drawable_widget";
+    static constexpr cstring name = "tyon::ui_drawable";
     static constexpr u128 id = uuid( "3e73fc4a-9d81-4fae-ad5d-49d2c0d68cb7" );
 
     PROC allocate() -> void
@@ -446,16 +443,20 @@ struct entity_type_definition<ui_drawable_widget>
 
     PROC init( t_entity* arg ) -> fresult
     {
+        if (arg->widget.valid() == false)
+        {   TYON_ERROR( "Drawable has no associated widget, did you forget to set it?" );
+            return false;
+        }
         ui_widget* widget = entity_allocate<ui_widget>();
-        // TODO: Working on
         // widget
-        entity_init( widget);
+        entity_init( widget );
+        mesh_init( &arg->geometry );
 
         return false;
     }
     PROC destroy( t_entity* arg ) -> void
     {
-        *arg = {};
+        *arg = t_entity{};
     }
 
     PROC tick( t_entity* arg ) -> void
@@ -469,10 +470,10 @@ struct entity_type_definition<ui_drawable_widget>
         {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
         }
         // TODO: Cache this result for high poly geometry
-        widget->bounding_box = mesh_bounding_box_2d( &arg->drawable.geometry );
+        widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
 
         // Queue the drawable for drawing
-        g_render->draw_queue_mesh.push_tail( &arg->drawable.geometry );
+        g_render->draw_queue_mesh.push_tail( &arg->geometry );
     }
 
     static PROC context_tick( void* context ) -> void {}
@@ -499,5 +500,6 @@ PROC ui_tick_end() -> void;
 
  NOTE: That box size uses center origin box coordinates*/
 PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool;
+
 
 }

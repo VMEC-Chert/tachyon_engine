@@ -23,16 +23,22 @@ namespace tyon
         font.platform_font = noto_sans;
         font.size_points = 16.0;
 
+        // Register all entity types
         entity_type_register<ui_widget>();
-        entity_type_register<ui_drawable_widget>();
-        ui_drawable_widget* test_status_bar = entity_allocate<ui_drawable_widget>();
-        test_status_bar->drawable.geometry = {
+        entity_type_register<ui_drawable>();
+
+        // Create a test widget
+        ui_drawable* test_status_bar = entity_allocate<ui_drawable>();
+        ui_widget* test_status_widget = entity_allocate<ui_widget>();
+        test_status_bar->geometry = {
             .name = "test_status_bar",
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
         };
-        test_status_bar->widget = entity_allocate<ui_widget>()->id;
-        mesh_init( &test_status_bar->drawable.geometry );
+        test_status_bar->widget = test_status_widget->id;
+        test_status_widget->transform.translation.z = 528;
+
         entity_init( test_status_bar );
+        entity_init( test_status_widget );
         TYON_LOG( "UI Initialized" );
 
         return true;
@@ -43,7 +49,7 @@ namespace tyon
         PROFILE_SCOPE_FUNCTION();
         ui_tick_start();
 
-        entity_tick_all<ui_drawable_widget>();
+        entity_tick_all<ui_drawable>();
         // Test code
         // if (ui_point_box_collision())
 
