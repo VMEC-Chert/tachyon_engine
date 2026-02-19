@@ -109,9 +109,9 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         void* result_ = nullptr;
         if (original)
         {   if (bytes == 0) {   impl->deallocate( original ); }
-            else { result_ = impl->allocate_relocate( original, alignment ); }
+            else { result_ = impl->allocate_relocate( original, bytes ); }
         }
-        else { result_ = impl->allocate_raw( bytes, alignment ); }
+        else { result_ = impl->allocate_raw( bytes, bytes ); }
 
         VULKAN_LOGF( "Reallocated {:>10} bytes in driver", bytes );
         VULKAN_LOGF( "Allocation Scope: {:>10} ", string_VkSystemAllocationScope(scope) );
@@ -132,8 +132,12 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
            allocated by pfnAllocation or pfnReallocation. The application should
            free this memory. */
         i_allocator* impl = ptr_cast<i_allocator*>( context );
-        impl->deallocate( address );
-        VULKAN_LOGF( "Deallocated data in driver    Address: {:>10} ", address );
+        // Don't need to bother anyone with logs or calls if tihs occurs
+        if (context)
+        {
+            impl->deallocate( address );
+            VULKAN_LOGF( "Deallocated data in driver    Address: {:>10} ", address );
+        }
     };
 
     // Allocation Notification
@@ -542,7 +546,7 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     arg->id = uuid_generate();
 
     VkAllocationCallbacks allocator = vulkan_allocator_create_callbacks(
-        g_vulkan->allocator.get() );
+        g_vulkan->allocator );
 
     if  (g_vulkan->surface)
     {
@@ -722,7 +726,7 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
 {
     PROFILE_SCOPE_FUNCTION();
     VkAllocationCallbacks allocator = vulkan_allocator_create_callbacks(
-        g_vulkan->allocator.get() );
+        g_vulkan->allocator );
 
     // Can't destroy resources that are still in use
     vkDeviceWaitIdle( g_vulkan->logical_device );
@@ -1194,6 +1198,8 @@ PROC vulkan_init() -> fresult
     PROFILE_SCOPE_FUNCTION();
     fresult result = false;
     g_vulkan = memory_allocate<vulkan_context>( 1 );
+    g_vulkan->allocator = &g_vulkan->default_allocator;
+
     auto self = g_vulkan;
     auto& instance = g_vulkan->instance;
     VkInstanceCreateInfo instance_args = {};
@@ -1202,7 +1208,7 @@ PROC vulkan_init() -> fresult
     i32& present_queue_family = self->present_queue_family;
 
     g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
-        g_vulkan->allocator.get() );
+        g_vulkan->allocator );
     // TODO: Remove Vulkan allocate temporarily
     g_vulkan->vk_allocator = nullptr;
     g_vulkan->vk_allocator = &g_vulkan->allocator_callback;
@@ -1290,7 +1296,7 @@ PROC vulkan_init() -> fresult
     app_info.applicationVersion = VK_MAKE_API_VERSION( 0, 0, 1, 0 );
     app_info.pEngineName = "Tachyon Engine";
     app_info.engineVersion = VK_MAKE_API_VERSION( 0, 0, 1, 0 );
-    app_info.apiVersion = VK_API_VERSION_1_0;
+    app_info.apiVersion = VK_API_VERSION_1_2;
 
     // for (i64 i=0; i<1)
     VULKAN_LOG( "Enabling Vulkan Layers:" );

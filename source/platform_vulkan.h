@@ -6,8 +6,8 @@ namespace tyon
 
 #define VULKAN_LOG( ... ) TYON_BASE_LOG( "Vulkan", __VA_ARGS__ );
 #define VULKAN_LOGF( FORMAT_, ... ) TYON_BASE_LOGF( "Vulkan", FORMAT_, __VA_ARGS__ );
-#define VULKAN_ERROR( ... ) TYON_BASE_ERROR( "Vulkan", __VA_ARGS__ );
-#define VULKAN_ERRORF( FORMAT_, ... ) TYON_BASE_ERRORF( "Vulkan", FORMAT_, __VA_ARGS__ );
+#define VULKAN_ERROR( ... ) TYON_BASE_ERROR( "Vulkan Error", __VA_ARGS__ );
+#define VULKAN_ERRORF( FORMAT_, ... ) TYON_BASE_ERRORF( "Vulkan Error", FORMAT_, __VA_ARGS__ );
 
 enum class e_vulkan_shader_debug : i32
 {
@@ -246,8 +246,8 @@ struct vulkan_context
 
 
     // Platform Independant State
-    /* memory_stack_allocator default_allocator; */
-    std::unique_ptr<i_allocator> allocator = std::make_unique<memory_heap_allocator>();
+    memory_heap_allocator default_allocator;
+    i_allocator* allocator = nullptr;
     /* Top level resource manager for vulkan, needs to be ordered after allocator for
      because Vulkan resoruces are allocated out of the allocator*/
     resource_arena resources;
