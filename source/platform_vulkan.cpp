@@ -2380,6 +2380,14 @@ PROC vulkan_draw() -> void
                 {
                     memory_copy_raw(
                         image_stage, draw_image->image.data, draw_image->image.size_bytes() );
+                    // TODO: Do we need this?
+                    VkMappedMemoryRange range {
+                        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                        .memory = g_vulkan->device_memory.memory,
+                        .offset = 0,
+                        .size = u64(vk_draw_image->staging_buffer.memory.size),
+                    };
+                    vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
                 }
                 vk_draw_image->update_timestamp = time_now_ns();
             }
