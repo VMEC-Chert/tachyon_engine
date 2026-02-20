@@ -127,6 +127,7 @@ PROC render_tick() -> void
     // SECTION: Reset data for new frame
     g_thread->scratch->blank_all();
     g_render->draw_queue_mesh.reset();
+    g_render->draw_queue_image.reset();
 
     sdl->tick();
     ui_tick();

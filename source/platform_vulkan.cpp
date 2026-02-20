@@ -1188,6 +1188,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     }
     bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
     image->id = uuid_generate();
+    VULKAN_LOG( "Intialized render image '{}' with id {}", arg->name, arg->id );
     return suballocate_ok;
 }
 
@@ -2128,7 +2129,7 @@ PROC vulkan_draw() -> void
     /* NOTE: We can have multiple frames inflight so we need to copy a seperate
        draw queue for each frame */
     current_frame->draw_queue_mesh.reset();
-    current_frame->draw_queue_mesh.reset();
+    current_frame->draw_queue_image.reset();
     current_frame->draw_queue_mesh = g_render->draw_queue_mesh;
     current_frame->draw_queue_image = g_render->draw_queue_image;
 
@@ -2229,7 +2230,7 @@ PROC vulkan_draw() -> void
     for (i32 i=0; i < current_frame->draw_queue_mesh.size(); ++i)
     {
         // SECTION: Select mesh for drawing
-        mesh* draw_mesh = g_render->draw_queue_mesh[i];
+        mesh* draw_mesh = current_frame->draw_queue_mesh[i];
 
         // Test Draw Meshes
         // draw_mesh = g_vulkan->draw_mesh;
@@ -2256,8 +2257,11 @@ PROC vulkan_draw() -> void
         }
         // NOTE: Pointer copy covers both no_vulkan_mesh search and first search
         vk_draw_mesh = mesh_result.match;
-        ERROR_GUARD( mesh_result.match_found,
-                    "We tried to draw a mesh with no associated Vulkan data" );
+        if (mesh_result.match_found == false)
+        {
+            VULKAN_ERROR( "We tried to draw a mesh with no associated Vulkan data" );
+            continue;
+        }
 
 
         // Bind vertex/ data to pipeline data slots

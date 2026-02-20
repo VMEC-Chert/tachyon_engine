@@ -340,6 +340,7 @@ struct ui_context
     ui_frame frame;
 
     uid tmp_bar;
+    render_image test_image;
 };
 
 extern ui_context* g_ui;

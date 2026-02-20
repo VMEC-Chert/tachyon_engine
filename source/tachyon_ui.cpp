@@ -40,6 +40,11 @@ namespace tyon
 
         entity_init( test_status_bar );
         entity_init( test_status_widget );
+
+        g_ui->test_image.image.data = memory_allocate<rgba>( 400 * 400 );
+        g_ui->test_image.image.size = { 400, 400 };
+        memset( g_ui->test_image.image.data, 0xFF, g_ui->test_image.image.size_bytes() );
+
         TYON_LOG( "UI Initialized" );
 
         return true;
@@ -52,6 +57,8 @@ namespace tyon
 
         entity_tick_all<ui_drawable>();
         // Test code
+        g_render->draw_queue_image.push_tail( &g_ui->test_image );
+
         // if (ui_point_box_collision())
         f32 mouse_x = 0.0f;
         f32 mouse_y = 0.0f;
