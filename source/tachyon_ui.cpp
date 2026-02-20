@@ -89,31 +89,31 @@ namespace tyon
     {
         widget_tree tree;
         auto& widget_list = entity_get_context<ui_widget>()->list;
-        i_allocator& allocator = g_thread->scratch;
+        i_allocator* allocator = g_thread->scratch;
 
         // +1 for the root node
         tree.size = widget_list.size() + 1;
-        tree.data = allocator.allocate<widget_tree::node>( entity_list.size() );
+        tree.data = allocator->allocate<widget_tree::node>( widget_list.size() );
 
         widget_tree::node root;
-        root.value = ui_widget {};
-        root.children.change_allocation( &allocator, 2 ); // 2 is an arbtrary number
+        root.value = nullptr;
+        root.children.change_allocation( allocator, 2 ); // 2 is an arbtrary number
         tree.data[ tree.size - 1 ] = root;
 
-        widget_tree::node x_node = nullptr;
-        ui_widget* x_widget = nullptr
+        widget_tree::node* x_node = nullptr;
+        ui_widget* x_widget = nullptr;
         // SECTION: Start populating the tree
         for (int i=0; i < widget_list.size(); ++i)
         {
             // TODO: Finish me
         }
 
-        return result;
+        return tree;
     }
 
     PROC ui_compute_screen_transform() -> transform_3d
     {
-
+        return {};
     }
 
 }

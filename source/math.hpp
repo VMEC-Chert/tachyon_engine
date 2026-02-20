@@ -55,6 +55,9 @@ struct v3f final
         x(_x), y(_y), z(_z) {}
     CONSTRUCTOR v3f( vector4_t<float> v );
 
+    CONSTRUCTOR v3f( const v3_f32 arg )
+    {   x = arg.x; y = arg.y; z = arg.z; }
+
     v3f
     operator+ (const v3f rhs) const
     { return v3f(x + rhs.x, y + rhs.y, z + rhs.z); }
@@ -92,14 +95,14 @@ struct v3f final
     { x = -x; y = -y; z = -z; return *this; }
 
     /// Compound Functions
-    v3f
+    inline v3f
     operator+= (const v3f rhs)
     {
         this->x += rhs.x; this->y += rhs.y; this->z += rhs.z;
         return *this;
     }
 
-    v3f
+    inline v3f
     FUNCTION normalize() const
     {
         f32 length = sqrtf( (x * x) + (y * y) + (z * z) );
@@ -107,10 +110,12 @@ struct v3f final
     }
 
     // Non-Member Functions
+    inline
     friend f32
     FUNCTION dot( const v3f lhs, const v3f rhs )
     { return (lhs.x * rhs.x) + (lhs.y * rhs.y) + (lhs.z * rhs.z); }
 
+    inline
     friend v3f
     FUNCTION cross( const v3f lhs, const v3f rhs )
     {
@@ -121,11 +126,16 @@ struct v3f final
         return out;
     }
 
+    inline
     friend v3f
     normalize( const v3f v )
     {
         return v.normalize();
     }
+
+    inline
+    operator v3_f32()
+    {   return v3_f32 { x, y, z }; }
 };
 
 template <typename t_calculable>
@@ -278,6 +288,14 @@ struct transform
     v3 rotation = v3(0.0f);
     v3 scale = v3(1.0f);
 
+    PROC operator= ( const transform_3d& arg ) -> transform&
+    {
+        translation = arg.translation;
+        rotation = arg.rotation;
+        scale = arg.scale;
+        return *this;
+    }
+
     matrix
     translation_matrix()
     { return matrix::create_translation( translation ); }
@@ -285,6 +303,11 @@ struct transform
     matrix
     transform_matrix()
     { return matrix::create_translation( translation ); }
+
+    operator transform_3d()
+    {
+        return transform_3d { translation, rotation, scale };
+    }
 
 };
 

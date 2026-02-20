@@ -472,6 +472,9 @@ struct entity_type_definition<ui_drawable>
         // TODO: Cache this result for high poly geometry
         widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
 
+        // TODO: Construct transform from widget hierarchy
+        arg->geometry.transform = widget->transform;
+
         // Queue the drawable for drawing
         g_render->draw_queue_mesh.push_tail( &arg->geometry );
     }
@@ -481,7 +484,7 @@ struct entity_type_definition<ui_drawable>
 
 };
 
-using widget_tree = n_tree<widget*>;
+using widget_tree = n_tree<ui_widget*>;
 
 PROC ui_init() -> fresult;
 PROC ui_tick() -> void;

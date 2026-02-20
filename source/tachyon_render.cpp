@@ -10,9 +10,24 @@ platform_subsystem* sdl = nullptr;
 
 PROC render_thread() -> void
 {
+    thread_options options = {
+        .short_name = "render",
+        .name = "name",
+        .description = "GPU Orchestration, windowing and UI subsystems",
+        .scheduler_priority = -10,
+        .permanant_block_size = 400_MiB,
+        .scratch_block_size = 400_MiB
+    };
+
+    thread_self_init( options );
+
     render_init();
-    render_tick();
-    thread_init_self()
+    while (global->kill_program == false && thread_self_interupt() == false)
+    {
+        time_monotonic next_frame = time_now() + 16666us;
+        render_tick();
+        std::this_thread::sleep_until( next_frame );
+    }
 }
 
 PROC render_init() -> void
@@ -110,7 +125,7 @@ PROC render_tick() -> void
 {
     PROFILE_SCOPE_FUNCTION();
     // SECTION: Reset data for new frame
-    g_thread->scratch.blank_all();
+    g_thread->scratch->blank_all();
     g_render->draw_queue_mesh.reset();
 
     sdl->tick();
