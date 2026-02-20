@@ -63,6 +63,7 @@ auto  VKAPI_CALL vulkan_debug_callback(
 namespace tyon
 {
 vulkan_context* g_vulkan = nullptr;
+const bool vulkan_config_trace_allocations = false;
 
 using vulkan_bool = u32;
 
@@ -82,10 +83,12 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         PROFILE_SCOPE_FUNCTION();
         i_allocator* impl = ptr_cast<i_allocator*>( context );
         void* result_ = impl->allocate_raw( bytes, alignment );
-        VULKAN_LOGF( "Allocated {} bytes in driver", bytes );
-        VULKAN_LOGF( "\tAllocation Scope: {} ", string_VkSystemAllocationScope(scope) );
-        VULKAN_LOGF( "Allocation Address: {} ", result_ );
-
+        if constexpr (vulkan_config_trace_allocations)
+        {
+            VULKAN_LOGF( "Allocated {} bytes in driver", bytes );
+            VULKAN_LOGF( "\tAllocation Scope: {} ", string_VkSystemAllocationScope(scope) );
+            VULKAN_LOGF( "Allocation Address: {} ", result_ );
+        }
         return result_;
     };
 
@@ -113,9 +116,12 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         }
         else { result_ = impl->allocate_raw( bytes, bytes ); }
 
-        VULKAN_LOGF( "Reallocated {:>10} bytes in driver", bytes );
-        VULKAN_LOGF( "Allocation Scope: {:>10} ", string_VkSystemAllocationScope(scope) );
-        VULKAN_LOGF( "Re-allocation Address: {:>10} ", original );
+        if constexpr (vulkan_config_trace_allocations)
+        {
+            VULKAN_LOGF( "Reallocated {:>10} bytes in driver", bytes );
+            VULKAN_LOGF( "Allocation Scope: {:>10} ", string_VkSystemAllocationScope(scope) );
+            VULKAN_LOGF( "Re-allocation Address: {:>10} ", original );
+        }
         if (result_ == nullptr)
         {   TYON_BREAK();
         }
@@ -133,9 +139,10 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
            free this memory. */
         i_allocator* impl = ptr_cast<i_allocator*>( context );
         // Don't need to bother anyone with logs or calls if tihs occurs
-        if (context)
+        if (context == nullptr) {   return; }
+        impl->deallocate( address );
+        if constexpr (vulkan_config_trace_allocations)
         {
-            impl->deallocate( address );
             VULKAN_LOGF( "Deallocated data in driver    Address: {:>10} ", address );
         }
     };
@@ -148,10 +155,13 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VkSystemAllocationScope scope
     )
     {
-        VULKAN_LOG( "Internal Allocation Event" );
-        VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
-        VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
-        VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
+        if constexpr (vulkan_config_trace_allocations)
+        {
+            VULKAN_LOG( "Internal Allocation Event" );
+            VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
+            VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
+            VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
+        }
     };
 
     result.pfnInternalFree = [](
@@ -161,10 +171,13 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
         VkSystemAllocationScope scope
     )
     {
-        VULKAN_LOG( "Internal Deallocation Event" );
-        VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
-        VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
-        VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
+        if constexpr (vulkan_config_trace_allocations)
+        {
+            VULKAN_LOG( "Internal Deallocation Event" );
+            VULKAN_LOGF( "\tAllocator Address: {:>10}", (void*)(context) );
+            VULKAN_LOGF( "\tAllocation Type: {:>10} ", string_VkInternalAllocationType(type) );
+            VULKAN_LOGF( "\tAllocated Bytes: {:>10} ", string_VkSystemAllocationScope(scope) );
+        }
     };
     return result;
 }

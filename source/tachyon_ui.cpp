@@ -36,6 +36,7 @@ namespace tyon
         };
         test_status_bar->widget = test_status_widget->id;
         test_status_widget->transform.translation.z = 528 - 12;
+        g_ui->tmp_bar = test_status_widget->id;
 
         entity_init( test_status_bar );
         entity_init( test_status_widget );
@@ -52,6 +53,21 @@ namespace tyon
         entity_tick_all<ui_drawable>();
         // Test code
         // if (ui_point_box_collision())
+        f32 mouse_x = 0.0f;
+        f32 mouse_y = 0.0f;
+        SDL_MouseButtonFlags flags = SDL_GetMouseState( &mouse_x, &mouse_y );
+        // auto* drawable = entity_search<ui_drawable>( g_ui->tmp_bar ).copy_default(nullptr);
+        auto* widget = entity_search<ui_widget>( g_ui->tmp_bar ).copy_default(nullptr);
+        // box_2d widget_bounds = mesh_bounding_box_2d( &drawable->geometry );
+        box_2d widget_bounds = widget->bounding_box;
+        bool collide = ui_point_box_collision( g_ui->input.mouse_window,
+                                               widget_bounds.position, widget_bounds.size );
+        // Debug Tracing
+        // TYON_LOG( widget_bounds.position.x, widget_bounds.position.y,
+                  // widget_bounds.size.x, widget_bounds.size. y);
+        if (collide)
+        {   TYON_LOG( "mouse hover" );
+        }
 
         ui_tick_end();
     }

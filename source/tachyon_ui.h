@@ -362,6 +362,8 @@ struct ui_context
 
     ui_frame frame_prev;
     ui_frame frame;
+
+    uid tmp_bar;
 };
 
 extern ui_context* g_ui;
