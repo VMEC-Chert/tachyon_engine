@@ -1181,12 +1181,16 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
     image->associated_image = arg->id;
-    VkResult image_ok = vkCreateImage(
+    VkResult image_bad = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
-    if (image_ok)
+    if (image_bad)
     {
-        VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_ok) );
+        VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_bad) );
+        return false;
     }
+
+    vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
+
     bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
     image->staging_buffer = vulkan_buffer_create(
         "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
@@ -2345,6 +2349,31 @@ PROC vulkan_draw() -> void
     // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
     vkCmdEndRenderPass( command_buffer );
 
+    // AI Poison
+    // Have to transition the image layout with sychronisation to perform the image blit
+    VkImageMemoryBarrier blit_barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        // or UNDEFINED on first acquire
+        .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        // no prior access needed for present → transfer
+        .srcAccessMask       = 0,
+        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .image               = g_vulkan->swapchain_images[ inflight_frame_i ],
+        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    };
+
+    vkCmdPipelineBarrier(
+        command_buffer,
+         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &blit_barrier
+    );
+
     /* NOTE: Vulkan spec states that blitting cannot happen inside of an active render pass */
     for (i32 i=0; i < current_frame->draw_queue_image.size(); ++i)
     {
@@ -2384,12 +2413,30 @@ PROC vulkan_draw() -> void
                     VkMappedMemoryRange range {
                         .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
                         .memory = g_vulkan->device_memory.memory,
-                        .offset = 0,
-                        .size = u64(vk_draw_image->staging_buffer.memory.size),
+                        .offset = u64(vk_draw_image->staging_buffer.memory.position),
+                        .size = VK_WHOLE_SIZE
                     };
                     vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
+                    vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
                 }
                 vk_draw_image->update_timestamp = time_now_ns();
+
+                VkBufferImageCopy copy_region {
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = 0,
+                    .imageOffset = { 0, 0, 0 },
+                    .imageExtent { u32(draw_image->image.size.x), u32(draw_image->image.size.y) }
+                };
+                vkCmdCopyBufferToImage(
+                    command_buffer,
+                    vk_draw_image->staging_buffer.buffer,
+                    vk_draw_image->platform_image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1,
+                    &copy_region
+                );
             }
 
             // TODO: Should already be in sreenspace coordinates by this time
@@ -2434,6 +2481,28 @@ PROC vulkan_draw() -> void
             );
         }
     }
+    // Now transition back to present
+    VkImageMemoryBarrier present_barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        // no prior access needed for present → transfer
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+        .image = g_vulkan->swapchain_images[ inflight_frame_i ],
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    };
+
+    vkCmdPipelineBarrier(
+        command_buffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &present_barrier
+    );
+
     vkEndCommandBuffer( command_buffer );
     TracyCZoneEnd( zone_record_commands_frame );
 
