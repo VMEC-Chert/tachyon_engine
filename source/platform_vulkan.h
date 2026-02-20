@@ -118,6 +118,13 @@ struct vulkan_mesh
     vulkan_buffer color_buffer;
 };
 
+struct vulkan_image
+{
+    uid id;
+    image<rgba> image;
+    VkImage platform_image;
+};
+
 
 struct vulkan_mesh_draw_args
 {
@@ -191,6 +198,7 @@ struct vulkan_context
 
     array<mesh*> tmp_meshes;
     array<vulkan_mesh> meshes;
+    array<vulkan_image> images;
     array<vulkan_frame> frames_inflight;
     vulkan_memory device_memory;
     i32 mesh_debug_mode_cycle = 0;
@@ -275,8 +283,12 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult;
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
+PROC vulkan_image_init( image<rgba>* arg ) -> fresult;
+
 /** Create a VkMemory object */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
+
+PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 
 PROC vulkan_init_pipelines() -> void;
 

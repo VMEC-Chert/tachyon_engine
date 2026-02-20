@@ -109,6 +109,7 @@ struct render_context
     scene_camera ui_camera;
 
     array<mesh*> draw_queue_mesh;
+    array< image<rgba>* > draw_queue_image;
 };
 
 extern render_context* g_render;

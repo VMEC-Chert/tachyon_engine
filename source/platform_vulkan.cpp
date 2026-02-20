@@ -1014,7 +1014,8 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
     entry.alignment = requirements.alignment;
     entry.usage_flag = buffer->type;
 
-    arg->head_size += entry.size;
+    i64 redzone_bytes = 64;
+    arg->head_size += (entry.size + redzone_bytes);
     // Copy to important places
     arg->used.push_tail( entry );
     buffer->memory = entry;
@@ -1025,6 +1026,46 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
         arg->memory,
         entry.position
     );
+
+    return true;
+}
+
+// Returns location of suballlocated memory
+PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
+{
+    PROFILE_SCOPE_FUNCTION();
+    if (arg->memory == nullptr)
+    {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
+        return false;
+    }
+
+    VkMemoryRequirements requirements {};
+    vkGetImageMemoryRequirements( g_vulkan->logical_device, image->platform_image, &requirements );
+
+    bool capacity_exceeded = (arg->head_size + requirements.size > arg->size);
+    if (capacity_exceeded)
+    {   VULKAN_ERRORF( "No memory left in physical memory '{:>20}'\n"
+                       "Required Image Size: {:>20}",
+                       arg->name, requirements.size );
+        return false;
+    }
+    // Create memory entry
+    vulkan_device_memory_entry entry;
+    // We're allocating images instead.
+    // entry.buffer = 0;
+    entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
+    entry.size = requirements.size;
+    entry.alignment = requirements.alignment;
+    // Not a buffer, meaningless
+    // entry.usage_flag = VK_BUFFER_USAGE;
+
+    bool redzone_bytes = 64;
+    arg->head_size += entry.size + redzone_bytes;
+    // Copy to important places
+    arg->used.push_tail( entry );
+
+    // Bind it into the subregion in the device memory
+    vkBindImageMemory( g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
 
     return true;
 }
@@ -1113,6 +1154,33 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     // return false;
     VULKAN_LOGF( "Initialized vulkan_mesh Name: {}    UUID: {}", arg->name, arg->id );
     return true;
+}
+
+PROC vulkan_image_init( image<rgba>* arg ) -> fresult
+{
+    VkImageCreateInfo image_args {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_B8G8R8A8_UNORM,
+        .extent = VkExtent3D { u32(arg->size.x), u32(arg->size.y), 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .usage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_SAMPLED_BIT),
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr
+    };
+
+    vulkan_image* image = &g_vulkan->images.push_tail({});
+    vkCreateImage(
+        g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
+    return false;
 }
 
 PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresult
