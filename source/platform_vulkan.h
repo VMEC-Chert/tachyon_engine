@@ -123,6 +123,8 @@ struct vulkan_image
     uid id;
     uid associated_image;
     VkImage platform_image;
+    time_monotonic_ns update_timestamp = 0;
+    vulkan_buffer staging_buffer;
 };
 
 

@@ -1188,6 +1188,10 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_ok) );
     }
     bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
+    image->staging_buffer = vulkan_buffer_create(
+        "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
+    vulkan_memory_suballocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
+
     image->id = uuid_generate();
     VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
     return suballocate_ok;
@@ -2360,27 +2364,56 @@ PROC vulkan_draw() -> void
         }
         if (vk_draw_image)
         {
-            // TODO: Should already be in sreenspace coordinates by this time
-            box_2d region = draw_image->draw_region;
-            bool unset_region = (region.size.x == 0 && region.size.y == 0);
-            if (unset_region)
+            // Update image if it's  dirty
+            if (draw_image->write_timestamp > vk_draw_image->update_timestamp)
             {
-                region.size = { f32(draw_image->image.size.x), f32(draw_image->image.size.y) };
+                void* image_stage = nullptr;
+                VkResult map_bad = vkMapMemory(
+                    g_vulkan->logical_device,
+                    g_vulkan->device_memory.memory,
+                    vk_draw_image->staging_buffer.memory.position,
+                    vk_draw_image->staging_buffer.memory.size,
+                    0,  // No known useful flags for this function
+                    &image_stage
+                );
+                if (image_stage)
+                {
+                    memory_copy_raw(
+                        image_stage, draw_image->image.data, draw_image->image.size_bytes() );
+                }
+                vk_draw_image->update_timestamp = time_now_ns();
             }
+
+            // TODO: Should already be in sreenspace coordinates by this time
+            box_2d clip = draw_image->clip_region;
+            box_2d region = draw_image->draw_region;
             VkExtent2D present = g_vulkan->swapchain.present_size;
+            bool unset_clip = (clip.size.x == 0 && clip.size.y == 0);
+            bool unset_region = (region.size.x == 0 && region.size.y == 0);
+
+            if (unset_clip)
+            {   // Default to whole image size
+                clip.position = { 0.0, 0.0 };
+                clip.size = { f32(draw_image->image.size.x), f32(draw_image->image.size.y) };
+            }
+            if (unset_region)
+            {   // Default to swapchain framebuffer size aka 'present_size'
+                region.position = { 0.0, 0.0 };
+                region.size = { f32(present.width), f32(present.height) };
+            }
             VkImageBlit vk_region {
                 .srcSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .srcOffsets= {
-                    VkOffset3D {i32(region.position.x), i32(region.position.y), 0},
-                    VkOffset3D { i32(region.size.x), i32(region.size.y), 1 }
+                    VkOffset3D {i32(clip.position.x), i32(clip.position.y), 0},
+                    VkOffset3D { i32(clip.size.x), i32(clip.size.y), 1 }
                 },
                 .dstSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .dstOffsets = {
-                    VkOffset3D {0, 0, 0},
-                    VkOffset3D { i32(present.width), i32(present.height), 0 }
+                    VkOffset3D {i32(region.position.x), i32(region.position.y), 0},
+                    VkOffset3D { i32(region.size.x), i32(region.size.y), 1 }
                 },
             };
-            u32 vk_region_n = 0;
+            u32 vk_region_n = 1;
             vkCmdBlitImage(
                 command_buffer,
                 vk_draw_image->platform_image,
