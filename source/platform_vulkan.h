@@ -146,7 +146,8 @@ struct vulkan_frame
     raw_pointer general_uniform_data;
     /* VkDescriptorPool descriptor_resource_pool; */
     VkDescriptorSet vk_resource;
-    array<mesh*> draw_queue_meshes;
+    array<mesh*> draw_queue_mesh;
+    array< render_image*> draw_queue_image;
 };
 
 struct vulkan_context
@@ -283,7 +284,7 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult;
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
-PROC vulkan_image_init( image<rgba>* arg ) -> fresult;
+PROC vulkan_image_init( render_image* arg ) -> fresult;
 
 /** Create a VkMemory object */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;

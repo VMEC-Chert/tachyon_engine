@@ -1157,13 +1157,13 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     return true;
 }
 
-PROC vulkan_image_init( image<rgba>* arg ) -> fresult
+PROC vulkan_image_init( render_image* arg ) -> fresult
 {
     VkImageCreateInfo image_args {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = VK_FORMAT_B8G8R8A8_UNORM,
-        .extent = VkExtent3D { u32(arg->size.x), u32(arg->size.y), 1 },
+        .extent = VkExtent3D { u32(arg->image.size.x), u32(arg->image.size.y), 1 },
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -1179,14 +1179,16 @@ PROC vulkan_image_init( image<rgba>* arg ) -> fresult
     };
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
+    image->associated_image = arg->id;
     VkResult image_ok = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
     if (image_ok)
     {
         VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_ok) );
     }
-    vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
-    return false;
+    bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
+    image->id = uuid_generate();
+    return suballocate_ok;
 }
 
 PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresult
@@ -2125,8 +2127,10 @@ PROC vulkan_draw() -> void
 
     /* NOTE: We can have multiple frames inflight so we need to copy a seperate
        draw queue for each frame */
-    current_frame->draw_queue_meshes.reset();
-    current_frame->draw_queue_meshes = g_render->draw_queue_mesh;
+    current_frame->draw_queue_mesh.reset();
+    current_frame->draw_queue_mesh.reset();
+    current_frame->draw_queue_mesh = g_render->draw_queue_mesh;
+    current_frame->draw_queue_image = g_render->draw_queue_image;
 
     current_frame->draw_index = current_frame_i;
     current_frame->inflight_index = inflight_frame_i;
@@ -2222,7 +2226,7 @@ PROC vulkan_draw() -> void
         vkCmdSetScissor( command_buffer, 0, 1, &scissor_config );
     }
 
-    for (i32 i=0; i < g_render->draw_queue_mesh.size(); ++i)
+    for (i32 i=0; i < current_frame->draw_queue_mesh.size(); ++i)
     {
         // SECTION: Select mesh for drawing
         mesh* draw_mesh = g_render->draw_queue_mesh[i];
@@ -2305,6 +2309,57 @@ PROC vulkan_draw() -> void
                   mesh_args.first_instance
                   );
     }
+    for (i32 i=0; i < current_frame->draw_queue_image.size(); ++i)
+    {
+        render_image* draw_image = current_frame->draw_queue_image[i];
+        // Find the associated vulkan image
+        auto image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg ) {
+            return arg.id == draw_image->id && arg.id.valid(); } );
+        vulkan_image* vk_draw_image = nullptr;
+        bool no_vulkan_image = (draw_image->id.valid() && image_result.match_found == false);
+        if (no_vulkan_image)
+        {
+            // Recreate and search again
+            vulkan_image_init( draw_image );
+            image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg ) {
+                return arg.id == vk_draw_image->associated_image && arg.id.valid(); } );
+        }
+        if (vk_draw_image)
+        {
+            // TODO: Should already be in sreenspace coordinates by this time
+            box_2d region = draw_image->draw_region;
+            bool unset_region = (region.size.x == 0 && region.size.y == 0);
+            if (unset_region)
+            {
+                region.size = { f32(draw_image->image.size.x), f32(draw_image->image.size.y) };
+            }
+            VkExtent2D present = g_vulkan->swapchain.present_size;
+            VkImageBlit vk_region {
+                .srcSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .srcOffsets= {
+                    VkOffset3D {i32(region.position.x), i32(region.position.y), 0},
+                    VkOffset3D { i32(region.size.x), i32(region.size.y), 1 }
+                },
+                .dstSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .dstOffsets = {
+                    VkOffset3D {0, 0, 0},
+                    VkOffset3D { i32(present.width), i32(present.height), 0 }
+                },
+            };
+            u32 vk_region_n = 0;
+            vkCmdBlitImage(
+                command_buffer,
+                vk_draw_image->platform_image,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                g_vulkan->swapchain_images[ inflight_frame_i ],
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                vk_region_n,
+                &vk_region,
+                VK_FILTER_LINEAR
+            );
+        }
+    }
+
     VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
     // Finalize frame and submit all commands

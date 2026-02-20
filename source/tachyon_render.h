@@ -96,6 +96,14 @@ struct frame_general_uniform
 };
 #pragma pack(pop)
 
+struct render_image
+{
+    uid id;
+    fstring name;
+    image<rgba> image;
+    box_2d draw_region;
+};
+
 // NOTE: Context structs should always be as near the bottom of the decleration order as possible.
 struct render_context
 {
@@ -108,8 +116,8 @@ struct render_context
     /* Orthographic UI camera */
     scene_camera ui_camera;
 
-    array<mesh*> draw_queue_mesh;
-    array< image<rgba>* > draw_queue_image;
+    array< mesh* > draw_queue_mesh;
+    array< render_image* > draw_queue_image;
 };
 
 extern render_context* g_render;
