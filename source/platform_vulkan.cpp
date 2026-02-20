@@ -2314,6 +2314,34 @@ PROC vulkan_draw() -> void
                   mesh_args.first_instance
                   );
     }
+
+    VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    // Finalize frame and submit all commands
+    VkSubmitInfo submit_args {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        // No semaphores to wait on yet
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = nullptr,
+        .pWaitDstStageMask = wait_stages,
+        // Just the one command buffer for now
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &self->queue_submit_semaphore,
+    };
+
+    // VkResult sync_ok = vkWaitForFences(
+    //     self->logical_device,
+    //     1,
+    //     &self->frame_begin_fence,
+    //     true,
+    //     16'666'666
+    // );
+    // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
+    vkCmdEndRenderPass( command_buffer );
+
+    /* NOTE: Vulkan spec states that blitting cannot happen inside of an active render pass */
     for (i32 i=0; i < current_frame->draw_queue_image.size(); ++i)
     {
         render_image* draw_image = current_frame->draw_queue_image[i];
@@ -2365,32 +2393,6 @@ PROC vulkan_draw() -> void
             );
         }
     }
-
-    VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-
-    // Finalize frame and submit all commands
-    VkSubmitInfo submit_args {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        // No semaphores to wait on yet
-        .waitSemaphoreCount = 0,
-        .pWaitSemaphores = nullptr,
-        .pWaitDstStageMask = wait_stages,
-        // Just the one command buffer for now
-        .commandBufferCount = 1,
-        .pCommandBuffers = &command_buffer,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &self->queue_submit_semaphore,
-    };
-
-    // VkResult sync_ok = vkWaitForFences(
-    //     self->logical_device,
-    //     1,
-    //     &self->frame_begin_fence,
-    //     true,
-    //     16'666'666
-    // );
-    // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
-    vkCmdEndRenderPass( command_buffer );
     vkEndCommandBuffer( command_buffer );
     TracyCZoneEnd( zone_record_commands_frame );
 
