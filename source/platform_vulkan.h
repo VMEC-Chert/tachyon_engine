@@ -121,7 +121,7 @@ struct vulkan_mesh
 struct vulkan_image
 {
     uid id;
-    image<rgba> image;
+    uid associated_image;
     VkImage platform_image;
 };
 
@@ -289,6 +289,8 @@ PROC vulkan_image_init( image<rgba>* arg ) -> fresult;
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
 
 PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
+
+PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult;
 
 PROC vulkan_init_pipelines() -> void;
 

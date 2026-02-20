@@ -1065,9 +1065,10 @@ PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) 
     arg->used.push_tail( entry );
 
     // Bind it into the subregion in the device memory
-    vkBindImageMemory( g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
+    VkResult bind_ok = vkBindImageMemory(
+        g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
 
-    return true;
+    return bind_ok == VK_SUCCESS;
 }
 
 PROC vulkan_mesh_init( mesh* arg ) -> fresult
@@ -1178,8 +1179,13 @@ PROC vulkan_image_init( image<rgba>* arg ) -> fresult
     };
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
-    vkCreateImage(
+    VkResult image_ok = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
+    if (image_ok)
+    {
+        VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_ok) );
+    }
+    vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
     return false;
 }
 
