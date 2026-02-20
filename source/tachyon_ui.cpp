@@ -35,7 +35,7 @@ namespace tyon
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
         };
         test_status_bar->widget = test_status_widget->id;
-        test_status_widget->transform.translation.z = 528;
+        test_status_widget->transform.translation.z = 528 - 12;
 
         entity_init( test_status_bar );
         entity_init( test_status_widget );

@@ -138,6 +138,13 @@ void main()
     // Add back camera rotation when its made available
     vec4 norm = projection * local * vec4( normal, 1.0 );
 
+    // local = mat4(
+    //              1, 0, 0, 0,
+    //              0, 1, 0, 0,
+    //              0, 0, 1, 0,
+    //              0, 0, 0, 1
+    //              );
+
     vertex = projection * cam * world * local * vertex;
     gl_Position = vertex;
     // gl_Position = perspective_divide( vertex );
