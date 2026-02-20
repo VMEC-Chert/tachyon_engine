@@ -617,7 +617,9 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     swapchain_args.imageFormat = self->swapchain_image_format;
     swapchain_args.imageExtent = arg->vk_present_size;
     swapchain_args.imageArrayLayers = 1; // More than 1 if a stereoscopic application
-    swapchain_args.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // TRANSFER_DST bit is useful for copying images directly into the framebuffer
+    swapchain_args.imageUsage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                 VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     swapchain_args.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_args.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     swapchain_args.queueFamilyIndexCount = 2;
@@ -1171,7 +1173,6 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .usage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                   VK_IMAGE_USAGE_SAMPLED_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
@@ -1188,7 +1189,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     }
     bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
     image->id = uuid_generate();
-    VULKAN_LOG( "Intialized render image '{}' with id {}", arg->name, arg->id );
+    VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
     return suballocate_ok;
 }
 
@@ -2244,7 +2245,7 @@ PROC vulkan_draw() -> void
         g_vulkan->test_teapot.transform.rotation.z = 6.28 * 0.25;
 
         // Find the associated vulkan mesh
-        auto mesh_result = g_vulkan->meshes.linear_search( [=]( vulkan_mesh& arg ) {
+        auto mesh_result = g_vulkan->meshes.linear_search( [draw_mesh]( vulkan_mesh& arg ) {
             return arg.id == draw_mesh->id && arg.id.valid(); } );
         vulkan_mesh* vk_draw_mesh = nullptr;
         bool no_vulkan_mesh = (draw_mesh->id.valid() && mesh_result.match_found == false);
@@ -2318,15 +2319,16 @@ PROC vulkan_draw() -> void
         render_image* draw_image = current_frame->draw_queue_image[i];
         // Find the associated vulkan image
         auto image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg ) {
-            return arg.id == draw_image->id && arg.id.valid(); } );
-        vulkan_image* vk_draw_image = nullptr;
+            return (arg.associated_image == draw_image->id) && arg.id.valid(); } );
+        vulkan_image* vk_draw_image = image_result.match;
         bool no_vulkan_image = (draw_image->id.valid() && image_result.match_found == false);
         if (no_vulkan_image)
         {
             // Recreate and search again
             vulkan_image_init( draw_image );
-            image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg ) {
-                return arg.id == vk_draw_image->associated_image && arg.id.valid(); } );
+            image_result = g_vulkan->images.linear_search( [draw_image]( vulkan_image& arg ) {
+                return (arg.associated_image == draw_image->id) && arg.id.valid(); } );
+            vk_draw_image = image_result.match;
         }
         if (vk_draw_image)
         {
