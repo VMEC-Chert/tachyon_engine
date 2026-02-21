@@ -70,6 +70,9 @@ struct vulkan_pipeline
 struct vulkan_device_memory_entry
 {
     VkBuffer buffer {};
+    /* Where in the node list the entry belongs to
+     NOTE: This is a performance optimization arouned linked lists */
+    i64 index {};
     // Identifying position
     i64 position {};
     i64 size {};
@@ -85,6 +88,13 @@ struct vulkan_memory
     // Name of the device memory region
     fstring name = "unnamed";
     i64 size {};
+    /** What type  of memory access we  need.
+
+        NOTE: This is actually EXTREMELY important because each "device heap" in
+        exposed by Vulkan has different access flags, and that by extension
+        limits how much memory you can allocate, and also whether you can map
+        the memory directly, or need to use staging buffers. The staging memory
+        is generally quite small */
     VkMemoryPropertyFlags access_flags;
     // State
     VkDeviceMemory memory;

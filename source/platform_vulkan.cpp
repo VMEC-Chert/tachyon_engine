@@ -902,7 +902,16 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
     VkPhysicalDeviceMemoryProperties memory_props {};
     vkGetPhysicalDeviceMemoryProperties( g_vulkan->device, &memory_props );
 
-    // TODO: Is HOST_COHERENT actually slower than DEVICE_LOCAL?
+    /* NOTE: Is HOST_COHERENT actually slower than DEVICE_LOCAL?
+
+       NOTE: Somewhat, it's a  bit of a mystery how it's  handled under the hook
+       which  leads people  to suggest  it's a  bit slower  than you  can do  by
+       hand. Which is true, but what's also slow is getting the staging CPU->GPU
+       copy wrong. What is also worth  considering is there is a small "staging"
+       region accessible  throuh the PCIe  BAR. A max of  around 256 Mib,  it is
+       only  increased  by  resizable  BAR,   but  this  is  supposedly  faster,
+       HOST_VISIBLE, and DEVICE_LOCAL at the same time. So it is a very valuable
+       chunk of memory to have access to. */
     VkMemoryPropertyFlags memory_filter = arg->access_flags;
 
     bool match = false;
@@ -1809,10 +1818,12 @@ PROC vulkan_init() -> fresult
         .vertexes = geometry_circle( 500/2, 16 ),
     };
 
-    file teapot_file = file_load_binary( "data/geometry/utah_teapot.stl" );
-    file whale_file = file_load_binary( "data/geometry/articulated_whale_shark.stl" );
-    fmesh teapot = read_stl_file( teapot_file.filename );
-    fmesh whale = read_stl_file( whale_file.filename );
+    // file teapot_file = file_load_binary( "data/geometry/utah_teapot.stl" );
+    // file whale_file = file_load_binary( "data/geometry/articulated_whale_shark.stl" );
+    // fmesh teapot = read_stl_file( teapot_file.filename );
+    // fmesh whale = read_stl_file( whale_file.filename );
+    fmesh teapot;
+    fmesh whale;
     g_vulkan->test_teapot = {
         .name = "test_utah_teapot",
         .vertexes {},
@@ -1847,14 +1858,24 @@ PROC vulkan_init() -> fresult
             whale_.vertex_normals[ i_vertex ] = whale.vertex_buffer[ i_vertex *2 ];
         }
     }
-    // TODO: Create memory object here
     g_vulkan->device_memory = {
-        .name = "global",
+        .name = "global_device_memory",
         // -1 means max memory size
         .size = 1_GiB,
-        // TODO: Is HOST_COHERENT actually slower than DEVICE_LOCAL?
+        /* NOTE: I  previous tried  to use  HOST_COHERENT /  HOST_VISIBLE memory
+         * here but it's  not actually very well supported,  especially in older
+         * Vulkan  versions. For  supported  Vulkan versions  unified memory  is
+         * limited  to a  very  small  ~256 MiB  region  for technical  regions,
+         * something to  do with the  PCIe address space or  something, machines
+         * with  resizable BAR  enabled can  take  advantage of  the entire  CPU
+         * address space and skip using device-only memory. My relatively recent
+         * machine doesn't  support this so  I figure it's reasonable  to assume
+         * it's  not a  good idea  to rely  on this.  But we  can use  it as  an
+         * optimization path later for simplifying control flow complexity.
+
+         TL;DR we are using DEVICE_LOCAL memory and uploading through a staging buffer */
         // .access_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-        .access_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        .access_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     };
     vulkan_memory_init( &g_vulkan->device_memory );
 
@@ -2469,16 +2490,18 @@ PROC vulkan_draw() -> void
                 },
             };
             u32 vk_region_n = 1;
-            vkCmdBlitImage(
-                command_buffer,
-                vk_draw_image->platform_image,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                g_vulkan->swapchain_images[ inflight_frame_i ],
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                vk_region_n,
-                &vk_region,
-                VK_FILTER_LINEAR
-            );
+            // TODO: Disable until it's finished
+            // vkCmdBlitImage(
+            //     command_buffer,
+            //     vk_draw_image->platform_image,
+            //     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            //     g_vulkan->swapchain_images[ inflight_frame_i ],
+            //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            //     vk_region_n,
+            //     &vk_region,
+            //     VK_FILTER_LINEAR
+            // );
+
         }
     }
     // Now transition back to present
