@@ -19,4 +19,4 @@
 #if (TYON_ENGINE_MAIN_STANDALONE)
     // Main include
     #include "../main.cpp"
-#endif TYON_ENGINE_UNITY_BUILD
+#endif // TYON_ENGINE_UNITY_BUILD
