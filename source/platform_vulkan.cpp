@@ -924,6 +924,26 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
         }
     };
 
+    // TODO: Need to do image requiremesnt and other stuff too
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, e_vulkan_memory_object::buffer_transfer_source );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT, e_vulkan_memory_object::buffer_transfer_destination );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, e_vulkan_memory_object::buffer_uniform_texel );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT, e_vulkan_memory_object::buffer_storage_texel );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, e_vulkan_memory_object::buffer_uniform );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, e_vulkan_memory_object::buffer_storage );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT, e_vulkan_memory_object::buffer_index );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, e_vulkan_memory_object::buffer_vertex );
+    check_buffer_memory_requirements(
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, e_vulkan_memory_object::buffer_indirect );
+
     // Just use vertex traits for now buffer
     VkMemoryRequirements memory_requirements = requirement_results[0];
     VkPhysicalDeviceMemoryProperties memory_props {};

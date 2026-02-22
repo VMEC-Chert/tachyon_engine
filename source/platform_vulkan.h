@@ -82,7 +82,17 @@ struct vulkan_device_memory_entry
 
 enum class e_vulkan_memory_object : i32
 {
-
+    buffer,
+    buffer_transfer_source,
+    buffer_transfer_destination,
+    buffer_uniform_texel,
+    buffer_storage_texel,
+    buffer_uniform,
+    buffer_storage,
+    buffer_index,
+    buffer_vertex,
+    buffer_indirect,
+    image
 };
 
 /** Metadata about a Vulkan object type like it's memory type, alignment, preferred heap, etc*/
