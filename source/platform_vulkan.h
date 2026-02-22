@@ -17,6 +17,21 @@ enum class e_vulkan_shader_debug : i32
     triangle_mosaic = 3
 };
 
+enum class e_vulkan_memory_object : i32
+{
+    buffer,
+    buffer_transfer_source,
+    buffer_transfer_destination,
+    buffer_uniform_texel,
+    buffer_storage_texel,
+    buffer_uniform,
+    buffer_storage,
+    buffer_index,
+    buffer_vertex,
+    buffer_indirect,
+    image
+};
+
 struct vulkan_mesh_shader_push
 {
     matrix local_space = matrix::one();
@@ -67,32 +82,37 @@ struct vulkan_pipeline
 
 };
 
+struct vulkan_heap
+{
+    /** Arbitrary index provided by vulkan */
+    i32 index;
+    VkMemoryHeapFlags heap_flags;
+};
+
+struct vulkan_memory_block
+{
+    VkDeviceMemory memory;
+    i64 size = 0;
+    i32 heap_index = 0;
+    VkMemoryPropertyFlags memory_flags = 0;
+    bool host_mappable = false;
+
+};
+
 struct vulkan_device_memory_entry
 {
     VkBuffer buffer {};
-    /* Where in the node list the entry belongs to
-     NOTE: This is a performance optimization arouned linked lists */
+    /* Where in the list the entry belongs to
+       NOTE: This is a performance optimization index */
     i64 index {};
-    // Identifying position
+    // Identifying position in the block this belongs to
     i64 position {};
     i64 size {};
+    /** Size including extra implimentation bytes like alignment and redzones */
+    i64 reserved_size {};
     i64 alignment {};
-    VkBufferUsageFlags usage_flag;
-};
-
-enum class e_vulkan_memory_object : i32
-{
-    buffer,
-    buffer_transfer_source,
-    buffer_transfer_destination,
-    buffer_uniform_texel,
-    buffer_storage_texel,
-    buffer_uniform,
-    buffer_storage,
-    buffer_index,
-    buffer_vertex,
-    buffer_indirect,
-    image
+    /** What type of object we are storing in this memory entry */
+    e_vulkan_memory_object type;
 };
 
 /** Metadata about a Vulkan object type like it's memory type, alignment, preferred heap, etc*/
@@ -121,7 +141,6 @@ struct vulkan_memory
         is generally quite small */
     VkMemoryPropertyFlags access_flags;
     // State
-    VkDeviceMemory memory;
     VkSharingMode sharing_mode;
 
     array<vulkan_object_memory_info> object_infos;
@@ -318,6 +337,11 @@ PROC vulkan_buffer_create(
     VkBufferUsageFlags type,
     VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE
 )   -> vulkan_buffer;
+
+/** Returns the index of the best memory type to use for this type. Monad
+ * returns with an error if it's bad */
+PROC vulkan_memory_best_type_index(
+    std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
 
 PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult;
 

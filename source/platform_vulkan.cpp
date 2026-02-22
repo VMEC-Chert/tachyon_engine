@@ -813,6 +813,60 @@ PROC vulkan_buffer_create(
     return result;
 }
 
+PROC vulkan_memory_best_type_index(
+    std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>
+{
+    monad<i32> result;
+    // Find all of the memory properties to search through
+    VkPhysicalDeviceMemoryProperties memory_props {};
+    vkGetPhysicalDeviceMemoryProperties( g_vulkan->device, &memory_props );
+
+    i32 best_index = -1;
+    /** How many flags are missing */
+    i32 best_missing_flag_n = 32;
+    /** If the current memory type being used an exact match of preferred flags */
+    i32 x_missing_flag_n = 32;
+    std::bitset<32> preferred_flags_match = 0;
+    for (i32 i=0; i < memory_props.memoryTypeCount; ++i)
+    {
+        VkMemoryType x_memory_type = memory_props.memoryTypes[ i ];
+        /** The heap associated with the index */
+        VkMemoryHeap x_heap = memory_props.memoryHeaps[ x_memory_type.heapIndex ];
+        std::bitset<32> memory_type = x_memory_type.propertyFlags;
+
+        // Reset these variables before we start working on them
+        x_missing_flag_n = 32;
+        preferred_flags_match = 0;
+
+        bool requirement_fulfilled = valid_type_bits[i];
+        preferred_flags_match = (memory_type & std::bitset<32>(preferred_flags));
+        // Count set bits
+        x_missing_flag_n = preferred_flags_match.count();
+
+        // Print heap statistics
+        VULKAN_LOGF( "Memory Type Property Flags: {:b}", x_memory_type.propertyFlags );
+        VULKAN_LOGF(
+            "Heap Stats: Heap Index: [{}] Heap Size : [{}] Heap Flags: [{:b}]",
+            i, x_heap.size, x_heap.flags
+        );
+
+        bool more_than_one_exact_match = (x_missing_flag_n == 0) && (best_missing_flag_n == 0);
+        VULKAN_LOGF( "Found more than one suitible memory type {} and {} for memory type bits {:b}",
+                     i, best_index, preferred_flags );
+        bool less_missing_flags = (x_missing_flag_n < best_missing_flag_n);
+        if (less_missing_flags)
+        {   best_index = i;
+            best_missing_flag_n = x_missing_flag_n;
+        }
+    }
+    if (best_index == -1)
+    {   VULKAN_ERROR( "No valid memory type found! typeBits {} preferred_flags {}" )
+        result.error = true;
+    }
+    result.value = best_index;
+    return result;
+}
+
 PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
@@ -1022,18 +1076,19 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
     memory_args.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     memory_args.allocationSize = arg->size;
     memory_args.memoryTypeIndex = memory_type_index;
-    auto memory_bad = vkAllocateMemory(
-        g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &arg->memory);
-    if (memory_bad)
-    {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
-                       string_VkResult( memory_bad ) );
-        return false;
-    }
-    VkDeviceMemory _memory = arg->memory;
-    g_vulkan->resources.push_cleanup( [_memory] {
-        VULKAN_LOG( "Destroying memory object" );
-        vkFreeMemory( g_vulkan->logical_device, _memory, g_vulkan->vk_allocator );
-    });
+    // TODO: Allocate block
+    // auto memory_bad = vkAllocateMemory(
+        // g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &arg->memory);
+    // if (memory_bad)
+    // {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
+    //                    string_VkResult( memory_bad ) );
+    //     return false;
+    // }
+    // TODO: push block onto free list
+    // g_vulkan->resources.push_cleanup( [_memory] {
+    //     VULKAN_LOG( "Destroying memory object" );
+    //     vkFreeMemory( g_vulkan->logical_device, _memory, g_vulkan->vk_allocator );
+    // });
     VULKAN_LOGF( "Allocated memory object. ID: {} Name: '{}' Size: {}",
                  arg->id, arg->name, arg->size );
     return true;
@@ -1050,40 +1105,40 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
 // Returns location of suballlocated memory
 PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
 {
-    PROFILE_SCOPE_FUNCTION();
-    if (arg->memory == nullptr)
-    {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
-        return false;
-    }
-    bool capacity_exceeded = (arg->head_size + buffer->size > arg->size);
-    if (capacity_exceeded)
-    {   VULKAN_ERRORF( "No memory left in physical memory '{}', requested size: {}",
-                       arg->name, buffer->size );
-        return false;
-    }
-    VkMemoryRequirements requirements {};
-    vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer->buffer, &requirements );
+    // PROFILE_SCOPE_FUNCTION();
+    // if (arg->memory == nullptr)
+    // {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
+    //     return false;
+    // }
+    // bool capacity_exceeded = (arg->head_size + buffer->size > arg->size);
+    // if (capacity_exceeded)
+    // {   VULKAN_ERRORF( "No memory left in physical memory '{}', requested size: {}",
+    //                    arg->name, buffer->size );
+    //     return false;
+    // }
+    // VkMemoryRequirements requirements {};
+    // vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer->buffer, &requirements );
 
-    // Create memory entry
-    vulkan_device_memory_entry entry;
-    entry.buffer = buffer->buffer;
-    entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
-    entry.size = buffer->size;
-    entry.alignment = requirements.alignment;
-    entry.usage_flag = buffer->type;
+    // // Create memory entry
+    // vulkan_device_memory_entry entry;
+    // entry.buffer = buffer->buffer;
+    // entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
+    // entry.size = buffer->size;
+    // entry.alignment = requirements.alignment;
+    // entry.usage_flag = buffer->type;
 
-    i64 redzone_bytes = 64;
-    arg->head_size += (entry.size + redzone_bytes);
-    // Copy to important places
-    // arg->used.push_tail( entry );
-    buffer->memory = entry;
+    // i64 redzone_bytes = 64;
+    // arg->head_size += (entry.size + redzone_bytes);
+    // // Copy to important places
+    // // arg->used.push_tail( entry );
+    // buffer->memory = entry;
 
-    vkBindBufferMemory(
-        g_vulkan->logical_device,
-        buffer->buffer,
-        arg->memory,
-        entry.position
-    );
+    // vkBindBufferMemory(
+    //     g_vulkan->logical_device,
+    //     buffer->buffer,
+    //     arg->memory,
+    //     entry.position
+    // );
 
     return true;
 }
@@ -1091,42 +1146,43 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
 // Returns location of suballlocated memory
 PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
 {
-    PROFILE_SCOPE_FUNCTION();
-    if (arg->memory == nullptr)
-    {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
-        return false;
-    }
+    // PROFILE_SCOPE_FUNCTION();
+    // if (arg->memory == nullptr)
+    // {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
+    //     return false;
+    // }
 
-    VkMemoryRequirements requirements {};
-    vkGetImageMemoryRequirements( g_vulkan->logical_device, image->platform_image, &requirements );
+    // VkMemoryRequirements requirements {};
+    // vkGetImageMemoryRequirements( g_vulkan->logical_device, image->platform_image, &requirements );
 
-    bool capacity_exceeded = (arg->head_size + requirements.size > arg->size);
-    if (capacity_exceeded)
-    {   VULKAN_ERRORF( "No memory left in physical memory '{:>20}'\n"
-                       "Required Image Size: {:>20}",
-                       arg->name, requirements.size );
-        return false;
-    }
-    // Create memory entry
-    vulkan_device_memory_entry entry;
-    // We're allocating images instead.
-    // entry.buffer = 0;
-    entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
-    entry.size = requirements.size;
-    entry.alignment = requirements.alignment;
-    // Not a buffer, meaningless
-    // entry.usage_flag = VK_BUFFER_USAGE;
+    // bool capacity_exceeded = (arg->head_size + requirements.size > arg->size);
+    // if (capacity_exceeded)
+    // {   VULKAN_ERRORF( "No memory left in physical memory '{:>20}'\n"
+    //                    "Required Image Size: {:>20}",
+    //                    arg->name, requirements.size );
+    //     return false;
+    // }
+    // // Create memory entry
+    // vulkan_device_memory_entry entry;
+    // // We're allocating images instead.
+    // // entry.buffer = 0;
+    // entry.position = arg->head_size + memory_padding( requirements.alignment, arg->head_size );
+    // entry.size = requirements.size;
+    // entry.alignment = requirements.alignment;
+    // // Not a buffer, meaningless
+    // // entry.usage_flag = VK_BUFFER_USAGE;
 
-    bool redzone_bytes = 64;
-    arg->head_size += entry.size + redzone_bytes;
-    // Copy to important places
-    // arg->used.push_tail( entry );
+    // bool redzone_bytes = 64;
+    // arg->head_size += entry.size + redzone_bytes;
+    // // Copy to important places
+    // // arg->used.push_tail( entry );
 
-    // Bind it into the subregion in the device memory
-    VkResult bind_ok = vkBindImageMemory(
-        g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
+    // // Bind it into the subregion in the device memory
+    // VkResult bind_ok = vkBindImageMemory(
+    //     g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
 
-    return bind_ok == VK_SUCCESS;
+    // return bind_ok == VK_SUCCESS;
+    return false;
 }
 
 PROC vulkan_mesh_init( mesh* arg ) -> fresult
@@ -1165,49 +1221,49 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     // {   vulkan_memory_suballocate_buffer( g_vulkan->device_memory, vk_mesh->color_buffer );
     // }
 
-    if ( g_vulkan->device_memory.memory == nullptr)
+    if ( vk_mesh->vertex_indexes_buffer.buffer == VK_NULL_HANDLE)
     {   return false;
     }
     void* _data {};
-    VkResult vertex_map_ok = vkMapMemory(
-        g_vulkan->logical_device,
-        g_vulkan->device_memory.memory,
-        vk_mesh->vertex_buffer.memory.position,
-        vk_mesh->vertex_buffer.size,
-        // No known useful flags for this function
-        0,
-        &_data
-    );
-    if (vertex_map_ok == VK_SUCCESS)
-    {
-        // Transform buffers into compatible format
-        // NOTE: We're copying directly into the mapped range and skipping intermediaries
-        raw_pointer data = _data;
-        v3* vertex_readhead = arg->vertexes.data;
-        i64 vertex_offset = (sizeof(v3));
-        i64 vertex_stride = (sizeof(v3) * 2);
-        raw_pointer writehead = data;
-        for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
-        {
-            // TODO: Fill in normals
-            writehead = data + (vertex_stride * i_vertex);
-            // Grab 3 and a time and copy it into the current triangle position
-            vertex_readhead = arg->vertexes.address( i_vertex );
-            // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
-            memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
-        }
+    // VkResult vertex_map_ok = vkMapMemory(
+    //     g_vulkan->logical_device,
+    //     g_vulkan->device_memory.memory,
+    //     vk_mesh->vertex_buffer.memory.position,
+    //     vk_mesh->vertex_buffer.size,
+    //     // No known useful flags for this function
+    //     0,
+    //     &_data
+    // );
+    // if (vertex_map_ok == VK_SUCCESS)
+    // {
+    //     // Transform buffers into compatible format
+    //     // NOTE: We're copying directly into the mapped range and skipping intermediaries
+    //     raw_pointer data = _data;
+    //     v3* vertex_readhead = arg->vertexes.data;
+    //     i64 vertex_offset = (sizeof(v3));
+    //     i64 vertex_stride = (sizeof(v3) * 2);
+    //     raw_pointer writehead = data;
+    //     for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
+    //     {
+    //         // TODO: Fill in normals
+    //         writehead = data + (vertex_stride * i_vertex);
+    //         // Grab 3 and a time and copy it into the current triangle position
+    //         vertex_readhead = arg->vertexes.address( i_vertex );
+    //         // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
+    //         memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
+    //     }
 
-        // NOTE: Unmaps all ranges associated with the memory at once
-        vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
-    }
+    //     // NOTE: Unmaps all ranges associated with the memory at once
+    //     vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
+    // }
 
     // Flush memory to make sure its used
-    VkMappedMemoryRange range {
-        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-        .memory = g_vulkan->device_memory.memory,
-        .offset = 0,
-        .size = u64(vk_mesh->vertex_buffer.size),
-    };
+    // VkMappedMemoryRange range {
+    //     .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+    //     .memory = g_vulkan->device_memory.memory,
+    //     .offset = 0,
+    //     .size = u64(vk_mesh->vertex_buffer.size),
+    // };
     // TODO: remove before flight
     // vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
     // return false;
@@ -1284,18 +1340,18 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
     /** WARNING: Please don't try to unmap memory suballocated from a buffer it
         will immediately invalidate every buffer associated with the device
         memory object. */
-    VkResult map_bad = vkMapMemory(
-        g_vulkan->logical_device,
-        g_vulkan->device_memory.memory,
-        arg->general_uniform_buffer.memory.position,
-        arg->general_uniform_buffer.size,
-        // No known useful flags for this function
-        0,
-        &data
-    );
-    if (map_bad)
-    {   return false;
-    }
+    // VkResult map_bad = vkMapMemory(
+    //     g_vulkan->logical_device,
+    //     g_vulkan->device_memory.memory,
+    //     arg->general_uniform_buffer.memory.position,
+    //     arg->general_uniform_buffer.size,
+    //     // No known useful flags for this function
+    //     0,
+    //     &data
+    // );
+    // if (map_bad)
+    // {   return false;
+    // }
     arg->general_uniform_data = data;
     return true;
 }
@@ -2464,27 +2520,27 @@ PROC vulkan_draw() -> void
             if (draw_image->write_timestamp > vk_draw_image->update_timestamp)
             {
                 void* image_stage = nullptr;
-                VkResult map_bad = vkMapMemory(
-                    g_vulkan->logical_device,
-                    g_vulkan->device_memory.memory,
-                    vk_draw_image->staging_buffer.memory.position,
-                    vk_draw_image->staging_buffer.memory.size,
-                    0,  // No known useful flags for this function
-                    &image_stage
-                );
+                // VkResult map_bad = vkMapMemory(
+                //     g_vulkan->logical_device,
+                //     g_vulkan->device_memory.memory,
+                //     vk_draw_image->staging_buffer.memory.position,
+                //     vk_draw_image->staging_buffer.memory.size,
+                //     0,  // No known useful flags for this function
+                //     &image_stage
+                // );
                 if (image_stage)
                 {
                     memory_copy_raw(
                         image_stage, draw_image->image.data, draw_image->image.size_bytes() );
                     // TODO: Do we need this?
-                    VkMappedMemoryRange range {
-                        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-                        .memory = g_vulkan->device_memory.memory,
-                        .offset = u64(vk_draw_image->staging_buffer.memory.position),
-                        .size = VK_WHOLE_SIZE
-                    };
-                    vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
-                    vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
+                    // VkMappedMemoryRange range {
+                    //     .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                    //     .memory = g_vulkan->device_memory.memory,
+                    //     .offset = u64(vk_draw_image->staging_buffer.memory.position),
+                    //     .size = VK_WHOLE_SIZE
+                    // };
+                    // vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
+                    // vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
                 }
                 vk_draw_image->update_timestamp = time_now_ns();
 
