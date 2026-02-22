@@ -132,7 +132,11 @@ struct vulkan_memory
     // Name of the device memory region
     fstring name = "unnamed";
     i64 size {};
-    i64 block_size = 256_MiB;
+    i64 device_block_size = 256_MiB;
+    /** The fast staging heap is often really small ~256 MiB so the block size must be smaller. */
+    i64 staging_block_size = 64_MiB;
+    /** Host accessible memory, behaves similar to unified memory. We usually have a lot of this. */
+    i64 unified_block_size = 256_MiB;
     /** What type  of memory access we  need.
 
         NOTE: This is actually EXTREMELY important because each "device heap" in
@@ -144,9 +148,9 @@ struct vulkan_memory
     // State
     VkSharingMode sharing_mode;
 
-    array<vulkan_object_memory_info> object_infos;
-    array<buffer> blocks;
-    array<vulkan_device_memory_entry> entries;
+    array< vulkan_object_memory_info > object_infos;
+    array< vulkan_memory_block > blocks;
+    array< vulkan_device_memory_entry > entries;
     /* linked_list<vulkan_device_memory_entry> used; */
     /* linked_list<vulkan_device_memory_entry> free; */
     i64 head_size {};

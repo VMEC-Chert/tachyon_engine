@@ -884,6 +884,8 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult
                        string_VkResult( memory_bad ) );
         return false;
     }
+    vulkan_label_object( (u64)arg->memory, VK_OBJECT_TYPE_DEVICE_MEMORY, "device_memory_block" );
+    VULKAN_LOGF( "Allocated device memory block. Size: {:>10}", arg->size );
     return true;
 }
 
@@ -905,70 +907,19 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
        As per the Vulkan Specification Glossary- "memory", is a handle to the
        actual physical memory or a memory allocation we are talking about.
 
-       A "buffer", is "a resource that represents a linear array of data in device
-       memory. Represented by a VkBuffer" object. A memory object must be bound to
-       a buffer to be used properly.
+       A "buffer", is "a resource that represents a linear array of data in
+       device memory. Represented by a VkBuffer" object. A memory object must be
+       bound to a buffer to be used properly- even for alternate types like
+       VkImage, you cannot actually write to it without first writing through a
+       memory mapped buffer.
     */
-    VkFormatProperties format_props {};
-    vkGetPhysicalDeviceFormatProperties(
-        g_vulkan->device, VK_FORMAT_B8G8R8A8_UNORM, &format_props );
-
-    /* SECTION: Create abunch of temporary buffers to test and fetch memory type
-       various default memory objects */
-    array<vulkan_buffer> requirement_buffers;
-    array<VkMemoryRequirements> requirement_results;
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_transfer", 32, VK_BUFFER_USAGE_TRANSFER_SRC_BIT ));
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_uniform_texel", 32, VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT ) );
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_storage_texel", 32, VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT ) );
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_uniform", 32, 
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT ) );
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_storage", 32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT ) );
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_index", 32, VK_BUFFER_USAGE_INDEX_BUFFER_BIT ) );
-    requirement_buffers.push_tail( vulkan_buffer_create( 
-        "requirements_vertex", 32, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT ) );
-    // NOTE: Everything after VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT not tested.
-
-    // Associate 'requirement_results' with 'requirement_buffers'
-    requirement_results.resize( requirement_buffers.size() );
-    VkBuffer x_buffer {};
-    VkMemoryRequirements* x_requirements = nullptr;
-    VULKAN_LOG( "Testing buffers for memory type compatability" );
-    // for (i64 i=0; i < requirement_buffers.size(); ++i)
-    // {
-    //     x_buffer = requirement_buffers[i].buffer;
-    //     x_requirements = requirement_results.address(i);
-    //     if (x_buffer)
-    //     {   vkGetBufferMemoryRequirements( g_vulkan->logical_device, x_buffer, x_requirements );
-    //         // We can can just clean up the buffers immediately after getting the requirements.
-    //         vkDestroyBuffer( g_vulkan->logical_device, x_buffer, g_vulkan->vk_allocator );
-    //         requirement_buffers[i].buffer = VK_NULL_HANDLE;
-
-    //         // Print reported memory types
-    //         fstring_view name = requirement_buffers[i].name;
-    //         std::bitset<32> type_bits = x_requirements->memoryTypeBits;
-    //         /* Check if all requirements are the same This will collapse on 0 if
-    //            atleast 1 bit isn't identical across all buffer's memory
-    //            requirement types. */
-    //         shared_bits &= x_requirements->memoryTypeBits;
-    //         VULKAN_LOGF( "memoryTypeBits {} '{}'", type_bits, name );
-    //     }
-    //     else
-    //     {   VULKAN_LOG( "Failed to even create a buffer" );
-    //     }
-    // }
-
     u32 buffer_shared_bits = ~0;
     auto check_buffer_memory_requirements = [&buffer_shared_bits] (
         VkBufferUsageFlagBits buffer_type,
         e_vulkan_memory_object object_type
-    )
+    ) -> monad<VkMemoryRequirements>
     {
+        monad<VkMemoryRequirements> result;
         vulkan_object_memory_info info;
         vulkan_buffer buffer = vulkan_buffer_create(
             "requirements_buffer_check", 32, buffer_type );
@@ -995,13 +946,17 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
         }
         else
         {   VULKAN_LOG( "Failed to even create a buffer" );
+            result.error = true;
         }
+        result.value = requirements;
+        return result;
     };
 
-    // TODO: Need to do image requiremesnt and other stuff too
+    VULKAN_LOG( "Testing buffers for memory type compatability" );
+    // TODO: Need to do image requirements and other stuff too
     check_buffer_memory_requirements(
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT, e_vulkan_memory_object::buffer_transfer_source );
-    check_buffer_memory_requirements(
+    monad<VkMemoryRequirements> transfer_destination_requirements = check_buffer_memory_requirements(
         VK_BUFFER_USAGE_TRANSFER_DST_BIT, e_vulkan_memory_object::buffer_transfer_destination );
     check_buffer_memory_requirements(
         VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, e_vulkan_memory_object::buffer_uniform_texel );
@@ -1017,15 +972,11 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, e_vulkan_memory_object::buffer_vertex );
     check_buffer_memory_requirements(
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, e_vulkan_memory_object::buffer_indirect );
-
-    // Just use vertex traits for now buffer
-    VkMemoryRequirements memory_requirements = requirement_results[0];
-    VkPhysicalDeviceMemoryProperties memory_props {};
-    vkGetPhysicalDeviceMemoryProperties( g_vulkan->device, &memory_props );
+    // NOTE: Everything after VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT is not tested.
 
     /* NOTE: Is HOST_COHERENT actually slower than DEVICE_LOCAL?
 
-       NOTE: Somewhat, it's a  bit of a mystery how it's  handled under the hook
+       NOTE: Somewhat, it's a  bit of a mystery how it's  handled under the hood
        which  leads people  to suggest  it's a  bit slower  than you  can do  by
        hand. Which is true, but what's also slow is getting the staging CPU->GPU
        copy wrong. What is also worth  considering is there is a small "staging"
@@ -1033,84 +984,31 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
        only  increased  by  resizable  BAR,   but  this  is  supposedly  faster,
        HOST_VISIBLE, and DEVICE_LOCAL at the same time. So it is a very valuable
        chunk of memory to have access to. */
-    VkMemoryPropertyFlags memory_filter = arg->access_flags;
 
-    bool match = false;
-    bool x_match = false;
-    i32 memory_type_index = 0;
-    for (i32 i=0; i < memory_props.memoryTypeCount; ++i)
+    /* NOTE: Allocate  a TRANSFER_DST buffer  memory type as the  default block,
+     * most objects you need  will transfer a transfer command to  it So it only
+     * makes sense for it  to be the default. It can be  deallocated later if it
+     * isn't a  good fit,  it would  be really  nice to  have a  block allocated
+     * upfront instead  of waiting way down  the line until we  start writing to
+     * memory objects. */
+
+    if (transfer_destination_requirements.error == false)
     {
-        VkMemoryType x_memory_type = memory_props.memoryTypes[ i ];
-        VkMemoryHeap x_heap = memory_props.memoryHeaps[ x_memory_type.heapIndex ];
-
-        x_match = false;
-        bool requirement_fulfilled = memory_requirements.memoryTypeBits & (1 << i);
-        bool filter_match = (x_memory_type.propertyFlags & memory_filter);
-        x_match = (requirement_fulfilled && filter_match);
-
-        // Print heap statistics
-        VULKAN_LOGF( "Memory Type Property Flags: {:b}", x_memory_type.propertyFlags );
-        VULKAN_LOGF(
-            "Heap Stats: Heap Index: [{}] Heap Size : [{}] Heap Flags: [{:b}]",
-            i, x_heap.size, x_heap.flags
+        vulkan_memory_find_best_type_index(
+            transfer_destination_requirements.value.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         );
-
-        if (x_match && match == false)
-        {   memory_type_index = i;
-            match = true;
-        }
-    }
-    if (match == false)
-    {   VULKAN_ERRORF( "Couldn't find suitible memory type for memory object {} '{}' ",
-                       arg->id, arg->name );
-        return false;
-    }
-
-    /* NOTE: We're just directly using the memory heap as the chunk size since we don't get a choice.
-       NOTE: We have no clue at all which heap will be used by this particular call.
-       NOTE: We have to use the found memory type index to find the heap it uses */
-    VkMemoryType memory_type = memory_props.memoryTypes[ memory_type_index ];
-    VkMemoryHeap heap = memory_props.memoryHeaps[ memory_type.heapIndex ];
-    fstring heap_stats = fmt::format(
-        "Required Heap Stats: Heap Index: [{}] Heap Size : [{}] Heap Flags: [{:b}]",
-        memory_type.heapIndex, heap.size, heap.flags
-    );
-
-    if (arg->size == -1)
-    {   VULKAN_LOG( "-1 Allocation size requested, Using max available heap size" );
-        arg->size = heap.size-1
-;
-    }
-    else if (arg->size > heap.size)
-    {   VULKAN_ERRORF(
-            "Memory allocation Name: '{}' Size: [{}] requested is larger than the required device heap",
-            arg->name, arg->size
-        );
-        VULKAN_LOG( heap_stats );
-        return false;
+        vulkan_memory_block& new_block = arg->blocks.push_tail({});
+        new_block = {
+            .memory = VK_NULL_HANDLE,
+            // NOTE: We're going to use device local memory for the first block
+            .size = arg->device_block_size,
+            .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            .host_mappable = false
+        };
+        vulkan_memory_allocate_block( &new_block );
     }
 
-    VULKAN_LOG( "Allocating memory from device heap" );
-    VULKAN_LOG( heap_stats );
-    VkMemoryAllocateInfo memory_args {};
-    memory_args.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    memory_args.allocationSize = arg->size;
-    memory_args.memoryTypeIndex = memory_type_index;
-    // TODO: Allocate block
-    // auto memory_bad = vkAllocateMemory(
-        // g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &arg->memory);
-    // if (memory_bad)
-    // {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
-    //                    string_VkResult( memory_bad ) );
-    //     return false;
-    // }
-    // TODO: push block onto free list
-    // g_vulkan->resources.push_cleanup( [_memory] {
-    //     VULKAN_LOG( "Destroying memory object" );
-    //     vkFreeMemory( g_vulkan->logical_device, _memory, g_vulkan->vk_allocator );
-    // });
-    VULKAN_LOGF( "Allocated memory object. ID: {} Name: '{}' Size: {}",
-                 arg->id, arg->name, arg->size );
     return true;
 }
 
