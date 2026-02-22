@@ -813,7 +813,7 @@ PROC vulkan_buffer_create(
     return result;
 }
 
-PROC vulkan_memory_best_type_index(
+PROC vulkan_memory_find_best_type_index(
     std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>
 {
     monad<i32> result;
@@ -865,6 +865,26 @@ PROC vulkan_memory_best_type_index(
     }
     result.value = best_index;
     return result;
+}
+
+PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult
+{
+    VkMemoryAllocateInfo memory_args {};
+    memory_args.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memory_args.pNext = nullptr;
+    memory_args.allocationSize = arg->size;
+    memory_args.memoryTypeIndex = arg->memory_type_index;
+
+    // Actually allocate the block
+    auto memory_bad = vkAllocateMemory(
+    g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &arg->memory);
+
+    if (memory_bad)
+    {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
+                       string_VkResult( memory_bad ) );
+        return false;
+    }
+    return true;
 }
 
 PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult

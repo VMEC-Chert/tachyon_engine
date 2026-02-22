@@ -93,6 +93,7 @@ struct vulkan_memory_block
 {
     VkDeviceMemory memory;
     i64 size = 0;
+    i32 memory_type_index = 0;
     i32 heap_index = 0;
     VkMemoryPropertyFlags memory_flags = 0;
     bool host_mappable = false;
@@ -340,8 +341,10 @@ PROC vulkan_buffer_create(
 
 /** Returns the index of the best memory type to use for this type. Monad
  * returns with an error if it's bad */
-PROC vulkan_memory_best_type_index(
+PROC vulkan_memory_find_best_type_index(
     std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
+
+PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult;
 
 PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult;
 
