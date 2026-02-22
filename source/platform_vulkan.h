@@ -80,6 +80,19 @@ struct vulkan_device_memory_entry
     VkBufferUsageFlags usage_flag;
 };
 
+enum class e_vulkan_memory_object : i32
+{
+
+};
+
+/** Metadata about a Vulkan object type like it's memory type, alignment, preferred heap, etc*/
+struct vulkan_object_memory_info
+{
+    e_vulkan_memory_object type;
+    std::bitset<32> memory_type_bits;
+    i64 alignment = 0;
+};
+
 /* Devie memory managed by the platform layer */
 struct vulkan_memory
 {
@@ -88,6 +101,7 @@ struct vulkan_memory
     // Name of the device memory region
     fstring name = "unnamed";
     i64 size {};
+    i64 block_size = 256_MiB;
     /** What type  of memory access we  need.
 
         NOTE: This is actually EXTREMELY important because each "device heap" in
@@ -100,8 +114,11 @@ struct vulkan_memory
     VkDeviceMemory memory;
     VkSharingMode sharing_mode;
 
-    linked_list<vulkan_device_memory_entry> used;
-    linked_list<vulkan_device_memory_entry> free;
+    array<vulkan_object_memory_info> object_infos;
+    array<buffer> blocks;
+    array<vulkan_device_memory_entry> entries;
+    /* linked_list<vulkan_device_memory_entry> used; */
+    /* linked_list<vulkan_device_memory_entry> free; */
     i64 head_size {};
 };
 

@@ -864,7 +864,6 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
     requirement_results.resize( requirement_buffers.size() );
     VkBuffer x_buffer {};
     VkMemoryRequirements* x_requirements = nullptr;
-    u32 shared_bits = ~0;
     VULKAN_LOG( "Testing buffers for memory type compatability" );
     for (i64 i=0; i < requirement_buffers.size(); ++i)
     {
@@ -890,13 +889,40 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
         }
     }
 
-    // SECTION: Search through available memory types to get a valid type index
-    bool no_shared_bits = (shared_bits == 0);
-    if (no_shared_bits)
-    {   VULKAN_ERROR( "not all buffer types support the same memory, seperate types"
-                      " are not supported yet. bailing memory allocation" );
-        return false;
-    }
+    u32 shared_bits = ~0;
+    auto check_buffer_memory_requirements = [=buffer_shared_bits] (
+        VkBufferUsageFlagBits buffer_type,
+        e_vulkan_memory_object object_type
+    )
+    {
+        vulkan_object_memory_info info;
+        vulkan_buffer buffer vulkan_buffer_create(
+            "requirements_buffer_check", 32, buffer_type );
+        VkMemoryRequirements requirements;
+        if (buffer.buffer)
+        {   vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer, &requirements );
+            // We can can just clean up the buffers immediately after getting the requirements.
+            vkDestroyBuffer( g_vulkan->logical_device, buffer.buffer, g_vulkan->vk_allocator );
+
+            // Print reported memory types
+            fstring_view name = string_VkBufferUsageFlagBits( buffer_type );
+            info.memory_type_bits = requirements->memoryTypeBits;
+
+            /* Check if all requirements are the same This will collapse on 0 if
+               atleast  1  bit  isn't   identical  across  all  buffer's  memory
+               requirement types.
+
+               NOTE: This isn't a very good way to do things but we can simplify
+               logic a  lot if all  buffer types are the  same. We will  have to
+               check again if it's coherent with other types too ie Vkimage*/
+            buffer_shared_bits &= requirements->memoryTypeBits;
+            VULKAN_LOGF( "memoryTypeBits {} '{}'", type_bits, name );
+        }
+        else
+        {   VULKAN_LOG( "Failed to even create a buffer" );
+        }
+    };
+
     // Just use vertex traits for now buffer
     VkMemoryRequirements memory_requirements = requirement_results[0];
     VkPhysicalDeviceMemoryProperties memory_props {};
@@ -1874,8 +1900,7 @@ PROC vulkan_init() -> fresult
          * optimization path later for simplifying control flow complexity.
 
          TL;DR we are using DEVICE_LOCAL memory and uploading through a staging buffer */
-        // .access_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-        .access_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        .access_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
     };
     vulkan_memory_init( &g_vulkan->device_memory );
 
