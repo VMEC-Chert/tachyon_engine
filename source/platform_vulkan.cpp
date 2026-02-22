@@ -2374,12 +2374,12 @@ PROC vulkan_draw() -> void
     // Have to transition the image layout with sychronisation to perform the image blit
     VkImageMemoryBarrier blit_barrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        // or UNDEFINED on first acquire
-        .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         // no prior access needed for present → transfer
         .srcAccessMask       = 0,
         .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+        // or UNDEFINED on first acquire
+        .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .image               = g_vulkan->swapchain_images[ inflight_frame_i ],
         .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -2507,11 +2507,11 @@ PROC vulkan_draw() -> void
     // Now transition back to present
     VkImageMemoryBarrier present_barrier = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         // no prior access needed for present → transfer
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .image = g_vulkan->swapchain_images[ inflight_frame_i ],
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
