@@ -889,15 +889,12 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult
     return true;
 }
 
-PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
+// PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
+
+
+PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
-    if (arg->id.valid())
-    {   VULKAN_ERRORF( "Tried to initialize already initialized memory object {} {}",
-                       arg->id, arg->name );
-        return false;
-    }
-    arg->id = uuid_generate();
     /* SECTION: Create vertex buffer for describing a mesh
 
        Here we create device memory to hold the data describing a mesh, like
@@ -1008,14 +1005,6 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
         };
         vulkan_memory_allocate_block( &new_block );
     }
-
-    return true;
-}
-
-PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
-{
-    PROFILE_SCOPE_FUNCTION();
-    vulkan_memory_allocate( arg );
 
     return true;
 }

@@ -124,7 +124,7 @@ struct vulkan_object_memory_info
     i64 alignment = 0;
 };
 
-/* Devie memory managed by the platform layer */
+/* Devie memory allocator */
 struct vulkan_memory
 {
     uid id;
@@ -350,13 +350,13 @@ PROC vulkan_memory_find_best_type_index(
 
 PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult;
 
-PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult;
+/* PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult; */
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
 PROC vulkan_image_init( render_image* arg ) -> fresult;
 
-/** Create a VkMemory object */
+/** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
 
 PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
