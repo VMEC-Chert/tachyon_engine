@@ -865,48 +865,49 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
     VkBuffer x_buffer {};
     VkMemoryRequirements* x_requirements = nullptr;
     VULKAN_LOG( "Testing buffers for memory type compatability" );
-    for (i64 i=0; i < requirement_buffers.size(); ++i)
-    {
-        x_buffer = requirement_buffers[i].buffer;
-        x_requirements = requirement_results.address(i);
-        if (x_buffer)
-        {   vkGetBufferMemoryRequirements( g_vulkan->logical_device, x_buffer, x_requirements );
-            // We can can just clean up the buffers immediately after getting the requirements.
-            vkDestroyBuffer( g_vulkan->logical_device, x_buffer, g_vulkan->vk_allocator );
-            requirement_buffers[i].buffer = VK_NULL_HANDLE;
-            
-            // Print reported memory types
-            fstring_view name = requirement_buffers[i].name;
-            std::bitset<32> type_bits = x_requirements->memoryTypeBits;
-            /* Check if all requirements are the same This will collapse on 0 if
-               atleast 1 bit isn't identical across all buffer's memory
-               requirement types. */
-            shared_bits &= x_requirements->memoryTypeBits;
-            VULKAN_LOGF( "memoryTypeBits {} '{}'", type_bits, name );
-        }
-        else
-        {   VULKAN_LOG( "Failed to even create a buffer" );
-        }
-    }
+    // for (i64 i=0; i < requirement_buffers.size(); ++i)
+    // {
+    //     x_buffer = requirement_buffers[i].buffer;
+    //     x_requirements = requirement_results.address(i);
+    //     if (x_buffer)
+    //     {   vkGetBufferMemoryRequirements( g_vulkan->logical_device, x_buffer, x_requirements );
+    //         // We can can just clean up the buffers immediately after getting the requirements.
+    //         vkDestroyBuffer( g_vulkan->logical_device, x_buffer, g_vulkan->vk_allocator );
+    //         requirement_buffers[i].buffer = VK_NULL_HANDLE;
 
-    u32 shared_bits = ~0;
-    auto check_buffer_memory_requirements = [=buffer_shared_bits] (
+    //         // Print reported memory types
+    //         fstring_view name = requirement_buffers[i].name;
+    //         std::bitset<32> type_bits = x_requirements->memoryTypeBits;
+    //         /* Check if all requirements are the same This will collapse on 0 if
+    //            atleast 1 bit isn't identical across all buffer's memory
+    //            requirement types. */
+    //         shared_bits &= x_requirements->memoryTypeBits;
+    //         VULKAN_LOGF( "memoryTypeBits {} '{}'", type_bits, name );
+    //     }
+    //     else
+    //     {   VULKAN_LOG( "Failed to even create a buffer" );
+    //     }
+    // }
+
+    u32 buffer_shared_bits = ~0;
+    auto check_buffer_memory_requirements = [&buffer_shared_bits] (
         VkBufferUsageFlagBits buffer_type,
         e_vulkan_memory_object object_type
     )
     {
         vulkan_object_memory_info info;
-        vulkan_buffer buffer vulkan_buffer_create(
+        vulkan_buffer buffer = vulkan_buffer_create(
             "requirements_buffer_check", 32, buffer_type );
         VkMemoryRequirements requirements;
         if (buffer.buffer)
-        {   vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer, &requirements );
+        {   vkGetBufferMemoryRequirements(
+                g_vulkan->logical_device, buffer.buffer, &requirements );
             // We can can just clean up the buffers immediately after getting the requirements.
             vkDestroyBuffer( g_vulkan->logical_device, buffer.buffer, g_vulkan->vk_allocator );
 
             // Print reported memory types
             fstring_view name = string_VkBufferUsageFlagBits( buffer_type );
-            info.memory_type_bits = requirements->memoryTypeBits;
+            info.memory_type_bits = requirements.memoryTypeBits;
 
             /* Check if all requirements are the same This will collapse on 0 if
                atleast  1  bit  isn't   identical  across  all  buffer's  memory
@@ -915,8 +916,8 @@ PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
                NOTE: This isn't a very good way to do things but we can simplify
                logic a  lot if all  buffer types are the  same. We will  have to
                check again if it's coherent with other types too ie Vkimage*/
-            buffer_shared_bits &= requirements->memoryTypeBits;
-            VULKAN_LOGF( "memoryTypeBits {} '{}'", type_bits, name );
+            buffer_shared_bits &= requirements.memoryTypeBits;
+            VULKAN_LOGF( "memoryTypeBits {} '{}'", info.memory_type_bits, name );
         }
         else
         {   VULKAN_LOG( "Failed to even create a buffer" );
@@ -1054,7 +1055,7 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
     i64 redzone_bytes = 64;
     arg->head_size += (entry.size + redzone_bytes);
     // Copy to important places
-    arg->used.push_tail( entry );
+    // arg->used.push_tail( entry );
     buffer->memory = entry;
 
     vkBindBufferMemory(
@@ -1099,7 +1100,7 @@ PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) 
     bool redzone_bytes = 64;
     arg->head_size += entry.size + redzone_bytes;
     // Copy to important places
-    arg->used.push_tail( entry );
+    // arg->used.push_tail( entry );
 
     // Bind it into the subregion in the device memory
     VkResult bind_ok = vkBindImageMemory(
@@ -1205,13 +1206,13 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .usage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                   VK_IMAGE_USAGE_SAMPLED_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = nullptr
+        .pQueueFamilyIndices = nullptr,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
