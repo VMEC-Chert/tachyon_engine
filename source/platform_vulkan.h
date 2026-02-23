@@ -103,8 +103,6 @@ struct vulkan_device_memory_entry
 
      No object tpye means a free entry with no associated device. */
     e_vulkan_memory_object type;
-    VkBuffer buffer {};
-    VkImage image {};
 };
 
 using vulkan_memory_node = linked_list<vulkan_device_memory_entry>::t_node;

@@ -913,9 +913,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
         .size = 0,
         .reserved_size = arg->size,
         .alignment = 1,
-        .type = e_vulkan_memory_object::none,
-        .buffer = VK_NULL_HANDLE,
-        .image = VK_NULL_HANDLE
+        .type = e_vulkan_memory_object::none
     };
     // Add entry to the list and free list
     auto start_node = new_block->entries.push_tail( start_entry );
@@ -1096,10 +1094,10 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             continue;
         }
         /* Space found, split the entry into 2, one unallocated and one allocated entry
-        NOTE: Reuse the old entry for the allocation and move the unallocated "space"
-        entry into the new one */
-        vulkan_memory_node* new_entry = x_entry;
-        vulkan_memory_node* space_entry = target_block->entries.insert_after( x_entry, {});
+           NOTE: Keep the original allocation in it's original index for free list convenient
+           and insert the new entry before it */
+        vulkan_memory_node* space_entry = x_entry;
+        vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
         // Copy the old data over and then we'll write over it
         vulkan_device_memory_entry old_entry = new_entry->value;
 
@@ -1131,6 +1129,9 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             .alignment = args.alignment,
         };
         result.value = new_entry->value;
+        result.error = false;
+        // Exit the loop
+        break;
     }
     return result;
 }
@@ -1159,10 +1160,6 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
     }
     vulkan_memory_block& target_block = arg->blocks[ entry.block ];
 
-    if (entry_ok.error)
-    {   VULKAN_ERROR( "Failed to create device memory entry" );
-        return false;
-    }
     // Lookup original memory entry and fill in the type
     vulkan_device_memory_entry& original_entry =
     target_block.entries.nodes[ entry.index ].value;
@@ -1202,10 +1199,6 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
     }
     vulkan_memory_block& target_block = arg->blocks[ entry.block ];
 
-    if (entry_ok.error)
-    {   VULKAN_ERROR( "Failed to create device memory entry" );
-        return false;
-    }
     // Lookup original memory entry and fill in the type
     vulkan_device_memory_entry& original_entry =
     target_block.entries.nodes[ entry.index ].value;
@@ -1343,10 +1336,12 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
 
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
-    // Create a host mappable staging/transfer buffer
+    // Create a host mappable staging/transfer buffer (try to use faster(*) BAR memory
+    // * not sur if this is actualy faster or not
     image->staging_buffer = vulkan_buffer_create(
         "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
-    image->staging_buffer.memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    image->staging_buffer.memory_flags =
+        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
 
     image->id = uuid_generate();
