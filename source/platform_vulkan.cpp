@@ -1150,19 +1150,32 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
         .memory_flags = (buffer->memory_flags ? buffer->memory_flags :
                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
+
     monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
     auto entry = entry_ok.value;
     if (entry_ok.error)
     {   VULKAN_ERROR( "Failed to create device memory entry" );
         return false;
     }
+    vulkan_memory_block& target_block = arg->blocks[ entry.block ];
+
+    if (entry_ok.error)
+    {   VULKAN_ERROR( "Failed to create device memory entry" );
+        return false;
+    }
     // Lookup original memory entry and fill in the type
     vulkan_device_memory_entry& original_entry =
-        arg->blocks[ entry.block ].entries.nodes[ entry.index ].value;
+    target_block.entries.nodes[ entry.index ].value;
     // NOTE: We can just lookup the buffer type from the buffer list
     original_entry.type = e_vulkan_memory_object::buffer;
     buffer->memory = original_entry;
 
+    vkBindBufferMemory(
+        g_vulkan->logical_device,
+        buffer->buffer,
+        target_block.memory,
+        entry.position
+    );
     return true;
 }
 
@@ -1180,14 +1193,35 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
         .memory_type_index = best_index,
         .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
+
     monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    auto entry = entry_ok.value;
     if (entry_ok.error)
     {   VULKAN_ERROR( "Failed to create device memory entry" );
         return false;
     }
-    image->memory = entry_ok.value;
+    vulkan_memory_block& target_block = arg->blocks[ entry.block ];
 
-    return true;
+    if (entry_ok.error)
+    {   VULKAN_ERROR( "Failed to create device memory entry" );
+        return false;
+    }
+    // Lookup original memory entry and fill in the type
+    vulkan_device_memory_entry& original_entry =
+    target_block.entries.nodes[ entry.index ].value;
+    // NOTE: We can just lookup the buffer type from the buffer list
+    original_entry.type = e_vulkan_memory_object::image;
+    image->memory = original_entry;
+
+    // Bind it into the subregion in the device memory
+    VkResult bind_bad = vkBindImageMemory(
+        g_vulkan->logical_device,
+        image->platform_image,
+        target_block.memory,
+        entry.position
+    );
+
+    return (bind_bad == VK_SUCCESS);
 }
 
 // Returns location of suballlocated memory
