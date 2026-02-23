@@ -101,9 +101,10 @@ struct vulkan_device_memory_entry
     i64 index {};
     // Identifying position in the block this belongs to
     i64 position {};
-    i64 size {};
     /** Position before alignment */
     i64 reserved_position = false;
+    /** Bytes allocated to an actual object, 0 when free */
+    i64 size {};
     /** Size including extra implimentation bytes like alignment and redzones */
     i64 reserved_size {};
     i64 alignment = 1;
@@ -119,7 +120,6 @@ using vulkan_memory_node = linked_list<vulkan_device_memory_entry>::t_node;
 
 struct vulkan_memory_block_args
 {
-    vulkan_memory* context;
     i64 size = 0;
     i32 memory_type_index = -1;
     VkMemoryPropertyFlags memory_flags = 0;
@@ -376,19 +376,26 @@ PROC vulkan_buffer_create(
     VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE
 )   -> vulkan_buffer;
 
-/** Returns the index of the best memory type to use for this type. Monad
- * returns with an error if it's bad */
-PROC vulkan_memory_find_best_type_index(
-    std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
-
-PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult;
-
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
 PROC vulkan_image_init( render_image* arg ) -> fresult;
 
 /** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
+
+/** Returns the index of the best memory type to use for this type. Monad
+ * returns with an error if it's bad */
+PROC vulkan_memory_find_best_type_index(
+    std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
+
+PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_args* arg ) -> fresult;
+
+/** This is supposed to be used as a convenience function internally for a
+    function like vulkan_memory_allocate_buffer(). It performs suballocation
+    from device memory as an internal memory manager but without a backing
+    type. */
+PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
+-> monad<vulkan_device_memory_entry>;
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 

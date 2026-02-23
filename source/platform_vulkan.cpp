@@ -867,7 +867,7 @@ PROC vulkan_memory_find_best_type_index(
     return result;
 }
 
-PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
+PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_args* arg ) -> fresult
 {
     if (arg->memory_type_index < 0)
     {   VULKAN_ERROR( "Called allocate block with negative memory_type_index" );
@@ -884,7 +884,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
     memory_args.allocationSize = arg->size;
     memory_args.memoryTypeIndex = arg->memory_type_index;
 
-    vulkan_memory_block* new_block = &arg->context->blocks.push_tail({});
+    vulkan_memory_block* new_block = &context->blocks.push_tail({});
 
     // Actually allocate the block
     auto memory_bad = vkAllocateMemory(
@@ -898,7 +898,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
 
     /* SECTION: Successful allocation, we can fill in the block data, null
        handle or 0 size is an invalid block */
-    new_block->index = arg->context->blocks.size() - 1;
+    new_block->index = context->blocks.size() - 1;
     new_block->size = arg->size;
     new_block->memory_type_index = arg->memory_type_index;
     new_block->memory_flags = arg->memory_flags;
@@ -906,7 +906,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
     new_block->largest_entry = arg->size;
 
     vulkan_device_memory_entry start_entry = {
-        .block = (arg->context.blocks.size() - 1),
+        .block = (context->blocks.size() - 1),
         .index = 0,
         .position = 0,
         // NOTE: Size is only the actively used bytes, unallocated entries have size as 0
@@ -1032,20 +1032,19 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
         ).copy_default( -1 );
 
         vulkan_memory_block_args block_args = {
-            .context = arg,
             .size = arg->device_block_size,
             .memory_type_index = memory_type,
             .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         };
 
-        vulkan_memory_allocate_block( &block_args );
+        vulkan_memory_allocate_block( arg, &block_args );
     }
 
     return true;
 }
 
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
-    -> monad<vulkan_device_memory_entry*>
+    -> monad<vulkan_device_memory_entry>
 {
     monad<vulkan_device_memory_entry> result;
     result.error = true;
@@ -1056,12 +1055,13 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         // NOTE: We need extra bytes for internal things like alignment and redzone so we use this
         i64 target_size = (args.size + context->redzone_bytes);
         // File suitible block
-        vulkan_memory_block* target_block = context->blocks.linear_search(
-            [args] ( vulkan_memory_block& block ) {
+        search_result<vulkan_memory_block> block_search = context->blocks.linear_search(
+            [args, target_size] ( vulkan_memory_block& block ) {
                 bool enough_space = (block.largest_entry >= target_size);
                 bool suitible_memory_type = (block.memory_type_index == args.memory_type_index);
                 return (enough_space && suitible_memory_type);
-            }).copy_default( nullptr );
+            });
+        vulkan_memory_block* target_block = block_search.match;
         if (target_block == nullptr)
         {   result.error = true;
             VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
@@ -1069,7 +1069,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         }
         // Find free entry in list
         i64 list_size = target_block->free_entries.size();
-        vulkan_device_memory_entry* x_entry = nullptr;
+        vulkan_memory_node* x_entry = nullptr;
         bool space_found = false;
         for (i64 i=0; i < list_size; ++i)
         {
@@ -1077,8 +1077,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             const i64 i_inverse = (list_size - 1 - i);
             const i64 entry_index = target_block->free_entries[ i_inverse ];
             x_entry = target_block->entries.nodes.address( entry_index );
-            if (x_entry->reserved_size >= target_size)
-            {   ERROR_GUARD( x_entry->type == e_vulkan_memory_object::none,
+            if (x_entry->value.reserved_size >= target_size)
+            {   ERROR_GUARD( x_entry->value.type == e_vulkan_memory_object::none,
                              "A filled type implies we're trying to used an already used entry" );
                 space_found = true;
                 break;
@@ -1088,40 +1088,49 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         {
             // No space, try to allocate a new block
             vulkan_memory_block_args block_args {
-                .context = context,
                 .size = context->device_block_size,
                 .memory_type_index = args.memory_type_index,
                 .memory_flags = args.memory_flags
             };
-            vulkan_memory_allocate_block( &block_args );
+            vulkan_memory_allocate_block( context, &block_args );
             continue;
         }
         /* Space found, split the entry into 2, one unallocated and one allocated entry
         NOTE: Reuse the old entry for the allocation and move the unallocated "space"
         entry into the new one */
-        vulkan_device_memory_entry* old_entry = x_entry;
+        vulkan_memory_node* new_entry = x_entry;
         vulkan_memory_node* space_entry = target_block->entries.insert_after( x_entry, {});
+        // Copy the old data over and then we'll write over it
+        vulkan_device_memory_entry old_entry = new_entry->value;
+
         // Move the space to the next node
         space_entry->value = {
-            .block = old_entry->block,
-            .index = space_entry.index,
+            .block = old_entry.block,
+            .index = space_entry->value.index,
             // Move the position up by the allocated space
-            .position = (old_entry->position + target_size),
+            .position = (old_entry.position + target_size),
             // Position before alignment
-            .reserved_position = (old_entry->position + target_size)
-            // Internal used bytes after alignment and redzone
-            .reserved_size = (old_entry->reserved_size - target_size),
+            .reserved_position = (old_entry.position + target_size),
+            // Allocated size is still 0
+            .size = 0,
+            // NOTE: Internal used bytes after alignment and redzone
+            // NOTE: Shrink the reserved space by the total used space
+            .reserved_size = (old_entry.reserved_size - target_size),
             .alignment = 1,
         };
-        *old_entry = {
-            .block = target_entry.block,
-            .position = target_entry.position,
+        // TODO: Don't know how to handle alignment here, this is an offset so what is "aligned"?
+        // Is new Vulkan memory objects it just auto aligned to 64 bytes always?
+        new_entry->value = {
+            .block = old_entry.block,
+            .index = old_entry.index,
+            .position = memory_align( old_entry.position, args.alignment ),
+            .reserved_position = old_entry.position,
             // The actual size allocated for the object
-            .size = arg->size,
+            .size = args.size,
             .reserved_size = target_size,
-            .alignment = 1,
+            .alignment = args.alignment,
         };
-        monad.value = old_entry;
+        result.value = new_entry->value;
     }
     return result;
 }
@@ -1997,23 +2006,26 @@ PROC vulkan_init() -> fresult
             whale_.vertex_normals[ i_vertex ] = whale.vertex_buffer[ i_vertex *2 ];
         }
     }
+
+    /* NOTE: I  previous tried  to use  HOST_COHERENT /  HOST_VISIBLE memory
+     * here but it's  not actually very well supported,  especially in older
+     * Vulkan  versions. For  supported  Vulkan versions  unified memory  is
+     * limited  to a  very  small  ~256 MiB  region  for technical  regions,
+     * something to  do with the  PCIe address space or  something, machines
+     * with  resizable BAR  enabled can  take  advantage of  the entire  CPU
+     * address space and skip using device-only memory. My relatively recent
+     * machine doesn't  support this so  I figure it's reasonable  to assume
+     * it's  not a  good idea  to rely  on this.  But we  can use  it as  an
+     * optimization path later for simplifying control flow complexity.
+
+     TL;DR we are using DEVICE_LOCAL memory and uploading through a staging buffer.
+
+    NOTE: It's no longer applicable to apply the access flags to the whole
+    device allocator.  This is done on a per-block basis. */
     g_vulkan->device_memory = {
         .name = "global_device_memory",
         // -1 means max memory size
         .size = 1_GiB,
-        /* NOTE: I  previous tried  to use  HOST_COHERENT /  HOST_VISIBLE memory
-         * here but it's  not actually very well supported,  especially in older
-         * Vulkan  versions. For  supported  Vulkan versions  unified memory  is
-         * limited  to a  very  small  ~256 MiB  region  for technical  regions,
-         * something to  do with the  PCIe address space or  something, machines
-         * with  resizable BAR  enabled can  take  advantage of  the entire  CPU
-         * address space and skip using device-only memory. My relatively recent
-         * machine doesn't  support this so  I figure it's reasonable  to assume
-         * it's  not a  good idea  to rely  on this.  But we  can use  it as  an
-         * optimization path later for simplifying control flow complexity.
-
-         TL;DR we are using DEVICE_LOCAL memory and uploading through a staging buffer */
-        .access_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
     };
     vulkan_memory_init( &g_vulkan->device_memory );
 
