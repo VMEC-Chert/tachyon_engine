@@ -1137,13 +1137,32 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
 {
+    PROFILE_SCOPE_FUNCTION();
+    VkMemoryRequirements requirements {};
+    vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer->buffer, &requirements );
 
-    return false;
+    i32 best_index = vulkan_memory_find_best_type_index(
+        requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ).copy_default(-1);
+    vulkan_allocate_args allocate_args {
+        .size = i64(requirements.size),
+        .alignment = i64(requirements.alignment),
+        .memory_type_index = best_index,
+        .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+    monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    if (entry_ok.error)
+    {   VULKAN_ERROR( "Failed to create device memory entry" );
+        return false;
+    }
+    buffer->memory = entry_ok.value;
+
+    return true;
 }
 
 PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
 {
-
+    PROFILE_SCOPE_FUNCTION();
+    
     return false;
 }
 
