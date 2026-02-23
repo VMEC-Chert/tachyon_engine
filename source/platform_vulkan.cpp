@@ -947,8 +947,7 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
     */
     u32 buffer_shared_bits = ~0;
     auto check_buffer_memory_requirements = [&buffer_shared_bits] (
-        VkBufferUsageFlagBits buffer_type,
-        e_vulkan_memory_object object_type
+        VkBufferUsageFlagBits buffer_type
     ) -> monad<VkMemoryRequirements>
     {
         monad<VkMemoryRequirements> result;
@@ -987,23 +986,24 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
     VULKAN_LOG( "Testing buffers for memory type compatability" );
     // TODO: Need to do image requirements and other stuff too
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, e_vulkan_memory_object::buffer_transfer_source );
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
     monad<VkMemoryRequirements> transfer_destination_requirements = check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT, e_vulkan_memory_object::buffer_transfer_destination );
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT );
+
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT, e_vulkan_memory_object::buffer_uniform_texel );
+        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT, e_vulkan_memory_object::buffer_storage_texel );
+        VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, e_vulkan_memory_object::buffer_uniform );
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, e_vulkan_memory_object::buffer_storage );
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT, e_vulkan_memory_object::buffer_index );
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, e_vulkan_memory_object::buffer_vertex );
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT );
     check_buffer_memory_requirements(
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, e_vulkan_memory_object::buffer_indirect );
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT );
     // NOTE: Everything after VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT is not tested.
 
     /* NOTE: Is HOST_COHERENT actually slower than DEVICE_LOCAL?
@@ -1150,11 +1150,17 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
         .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
     monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    auto entry = entry_ok.value;
     if (entry_ok.error)
     {   VULKAN_ERROR( "Failed to create device memory entry" );
         return false;
     }
-    buffer->memory = entry_ok.value;
+    // Lookup original memory entry and fill in the type
+    vulkan_device_memory_entry& original_entry =
+        arg->blocks[ entry.block ].entries.nodes[ entry.index ].value;
+    // NOTE: We can just lookup the buffer type from the buffer list
+    original_entry.type = e_vulkan_memory_object::buffer;
+    buffer->memory = original_entry;
 
     return true;
 }
@@ -1162,8 +1168,25 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
 PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
-    
-    return false;
+    VkMemoryRequirements requirements {};
+    vkGetImageMemoryRequirements( g_vulkan->logical_device, image->platform_image, &requirements );
+
+    i32 best_index = vulkan_memory_find_best_type_index(
+        requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ).copy_default(-1);
+    vulkan_allocate_args allocate_args {
+        .size = i64(requirements.size),
+        .alignment = i64(requirements.alignment),
+        .memory_type_index = best_index,
+        .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+    monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    if (entry_ok.error)
+    {   VULKAN_ERROR( "Failed to create device memory entry" );
+        return false;
+    }
+    image->memory = entry_ok.value;
+
+    return true;
 }
 
 // Returns location of suballlocated memory
