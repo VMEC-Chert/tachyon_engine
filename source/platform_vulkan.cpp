@@ -1147,7 +1147,8 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
         .size = i64(requirements.size),
         .alignment = i64(requirements.alignment),
         .memory_type_index = best_index,
-        .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        .memory_flags = (buffer->memory_flags ? buffer->memory_flags :
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
     monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
     auto entry = entry_ok.value;
@@ -1391,8 +1392,10 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
 
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
+    // Create a host mappable staging/transfer buffer
     image->staging_buffer = vulkan_buffer_create(
         "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
+    image->staging_buffer.memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
 
     image->id = uuid_generate();
@@ -2369,7 +2372,10 @@ PROC vulkan_draw() -> void
      // (take copy on purpose for temporary camera data)
     frame_general_uniform uniform_copy = *current_uniform;
     uniform_copy.camera = current_uniform->camera.unreal_to_vulkan().transpose();
-    memory_copy<frame_general_uniform>( current_frame->general_uniform_data, &uniform_copy, 1 );
+    if (current_frame->general_uniform_data)
+    {
+        memory_copy<frame_general_uniform>( current_frame->general_uniform_data, &uniform_copy, 1 );
+    }
 
     // Update the descriptor resource associated with the uniform
     VkDescriptorBufferInfo resource_buffer_info {

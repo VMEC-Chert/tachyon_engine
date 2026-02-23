@@ -193,6 +193,8 @@ struct vulkan_buffer
     VkBuffer buffer {};
     // Associated memory allocated from device
     vulkan_device_memory_entry memory;
+    /** Optional */
+    VkMemoryPropertyFlags memory_flags;
 };
 
 struct vulkan_mesh
