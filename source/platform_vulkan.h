@@ -95,16 +95,21 @@ struct vulkan_heap
 
 struct vulkan_device_memory_entry
 {
+    i64 block {};
     /* Where in the list the entry belongs to
        NOTE: This is a performance optimization index */
     i64 index {};
     // Identifying position in the block this belongs to
     i64 position {};
     i64 size {};
+    /** Position before alignment */
+    i64 reserved_position = false;
     /** Size including extra implimentation bytes like alignment and redzones */
     i64 reserved_size {};
     i64 alignment = 1;
-    /** What type of object we are storing in this memory entry */
+    /** What type of object we are storing in this memory entry
+
+     No object tpye means a free entry with no associated device. */
     e_vulkan_memory_object type;
     VkBuffer buffer {};
     VkImage image {};
@@ -122,15 +127,24 @@ struct vulkan_memory_block_args
 
 struct vulkan_memory_block
 {
+    i64 index = 0;
     VkDeviceMemory memory;
     i64 size = 0;
     i32 memory_type_index = 0;
     i32 heap_index = 0;
+    /** What type  of memory access we  need.
+
+        NOTE: This is actually EXTREMELY important because each "device heap" in
+        exposed by Vulkan has different access flags, and that by extension
+        limits how much memory you can allocate, and also whether you can map
+        the memory directly, or need to use staging buffers. The staging memory
+        is generally quite small */
     VkMemoryPropertyFlags memory_flags = 0;
     bool host_mappable = false;
 
     linked_list< vulkan_device_memory_entry > entries;
     array< i64  > free_entries;
+    i64 largest_entry = 0;
 };
 
 /** Metadata about a Vulkan object type like it's memory type, alignment, preferred heap, etc*/
@@ -156,16 +170,6 @@ struct vulkan_memory
     i64 staging_block_size = 64_MiB;
     /** Host accessible memory, behaves similar to unified memory. We usually have a lot of this. */
     i64 unified_block_size = 256_MiB;
-    /** What type  of memory access we  need.
-
-        NOTE: This is actually EXTREMELY important because each "device heap" in
-        exposed by Vulkan has different access flags, and that by extension
-        limits how much memory you can allocate, and also whether you can map
-        the memory directly, or need to use staging buffers. The staging memory
-        is generally quite small */
-    VkMemoryPropertyFlags access_flags;
-    // State
-    VkSharingMode sharing_mode;
 
     array< vulkan_object_memory_info > object_infos;
     array< vulkan_memory_block > blocks;
@@ -173,6 +177,16 @@ struct vulkan_memory
     /* linked_list<vulkan_device_memory_entry> used; */
     /* linked_list<vulkan_device_memory_entry> free; */
     i64 head_size {};
+};
+
+struct vulkan_allocate_args
+{
+    i64 size = 0;
+    i64 alignment = 0;
+    i32 memory_type_index = -1;
+    VkMemoryPropertyFlags memory_flags;
+    /** Optional arg */
+    i32 force_heap_index = -1;
 };
 
 struct vulkan_buffer

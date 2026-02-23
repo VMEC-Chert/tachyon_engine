@@ -898,11 +898,15 @@ PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
 
     /* SECTION: Successful allocation, we can fill in the block data, null
        handle or 0 size is an invalid block */
+    new_block->index = arg->context->blocks.size() - 1;
     new_block->size = arg->size;
     new_block->memory_type_index = arg->memory_type_index;
     new_block->memory_flags = arg->memory_flags;
+    new_block->host_mappable = (arg->memory_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    new_block->largest_entry = arg->size;
 
     vulkan_device_memory_entry start_entry = {
+        .block = (arg->context.blocks.size() - 1),
         .index = 0,
         .position = 0,
         // NOTE: Size is only the actively used bytes, unallocated entries have size as 0
@@ -1040,8 +1044,91 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
     return true;
 }
 
+PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
+    -> monad<vulkan_device_memory_entry*>
+{
+    monad<vulkan_device_memory_entry> result;
+    result.error = true;
+    i32 i_attempts = 0;
+    i32 attempts_limit = 3;
+    for (; i_attempts < attempts_limit; ++i_attempts)
+    {
+        // NOTE: We need extra bytes for internal things like alignment and redzone so we use this
+        i64 target_size = (args.size + context->redzone_bytes);
+        // File suitible block
+        vulkan_memory_block* target_block = context->blocks.linear_search(
+            [args] ( vulkan_memory_block& block ) {
+                bool enough_space = (block.largest_entry >= target_size);
+                bool suitible_memory_type = (block.memory_type_index == args.memory_type_index);
+                return (enough_space && suitible_memory_type);
+            }).copy_default( nullptr );
+        if (target_block == nullptr)
+        {   result.error = true;
+            VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
+            return result;
+        }
+        // Find free entry in list
+        i64 list_size = target_block->free_entries.size();
+        vulkan_device_memory_entry* x_entry = nullptr;
+        bool space_found = false;
+        for (i64 i=0; i < list_size; ++i)
+        {
+            // Walk in backwards order to take advantage of free entries being added to the end
+            const i64 i_inverse = (list_size - 1 - i);
+            const i64 entry_index = target_block->free_entries[ i_inverse ];
+            x_entry = target_block->entries.nodes.address( entry_index );
+            if (x_entry->reserved_size >= target_size)
+            {   ERROR_GUARD( x_entry->type == e_vulkan_memory_object::none,
+                             "A filled type implies we're trying to used an already used entry" );
+                space_found = true;
+                break;
+            }
+        }
+        if (space_found == false)
+        {
+            // No space, try to allocate a new block
+            vulkan_memory_block_args block_args {
+                .context = context,
+                .size = context->device_block_size,
+                .memory_type_index = args.memory_type_index,
+                .memory_flags = args.memory_flags
+            };
+            vulkan_memory_allocate_block( &block_args );
+            continue;
+        }
+        /* Space found, split the entry into 2, one unallocated and one allocated entry
+        NOTE: Reuse the old entry for the allocation and move the unallocated "space"
+        entry into the new one */
+        vulkan_device_memory_entry* old_entry = x_entry;
+        vulkan_memory_node* space_entry = target_block->entries.insert_after( x_entry, {});
+        // Move the space to the next node
+        space_entry->value = {
+            .block = old_entry->block,
+            .index = space_entry.index,
+            // Move the position up by the allocated space
+            .position = (old_entry->position + target_size),
+            // Position before alignment
+            .reserved_position = (old_entry->position + target_size)
+            // Internal used bytes after alignment and redzone
+            .reserved_size = (old_entry->reserved_size - target_size),
+            .alignment = 1,
+        };
+        *old_entry = {
+            .block = target_entry.block,
+            .position = target_entry.position,
+            // The actual size allocated for the object
+            .size = arg->size,
+            .reserved_size = target_size,
+            .alignment = 1,
+        };
+        monad.value = old_entry;
+    }
+    return result;
+}
+
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
 {
+
     return false;
 }
 
