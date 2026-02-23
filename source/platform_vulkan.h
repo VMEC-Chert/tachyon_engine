@@ -9,6 +9,8 @@ namespace tyon
 #define VULKAN_ERROR( ... ) TYON_BASE_ERROR( "Vulkan Error", __VA_ARGS__ );
 #define VULKAN_ERRORF( FORMAT_, ... ) TYON_BASE_ERRORF( "Vulkan Error", FORMAT_, __VA_ARGS__ );
 
+FORWARD struct vulkan_memory;
+
 enum class e_vulkan_shader_debug : i32
 {
     none = 0,
@@ -19,6 +21,8 @@ enum class e_vulkan_shader_debug : i32
 
 enum class e_vulkan_memory_object : i32
 {
+    none,
+    any,
     buffer,
     buffer_transfer_source,
     buffer_transfer_destination,
@@ -89,6 +93,33 @@ struct vulkan_heap
     VkMemoryHeapFlags heap_flags;
 };
 
+struct vulkan_device_memory_entry
+{
+    /* Where in the list the entry belongs to
+       NOTE: This is a performance optimization index */
+    i64 index {};
+    // Identifying position in the block this belongs to
+    i64 position {};
+    i64 size {};
+    /** Size including extra implimentation bytes like alignment and redzones */
+    i64 reserved_size {};
+    i64 alignment = 1;
+    /** What type of object we are storing in this memory entry */
+    e_vulkan_memory_object type;
+    VkBuffer buffer {};
+    VkImage image {};
+};
+
+using vulkan_memory_node = linked_list<vulkan_device_memory_entry>::t_node;
+
+struct vulkan_memory_block_args
+{
+    vulkan_memory* context;
+    i64 size = 0;
+    i32 memory_type_index = -1;
+    VkMemoryPropertyFlags memory_flags = 0;
+};
+
 struct vulkan_memory_block
 {
     VkDeviceMemory memory;
@@ -98,22 +129,8 @@ struct vulkan_memory_block
     VkMemoryPropertyFlags memory_flags = 0;
     bool host_mappable = false;
 
-};
-
-struct vulkan_device_memory_entry
-{
-    VkBuffer buffer {};
-    /* Where in the list the entry belongs to
-       NOTE: This is a performance optimization index */
-    i64 index {};
-    // Identifying position in the block this belongs to
-    i64 position {};
-    i64 size {};
-    /** Size including extra implimentation bytes like alignment and redzones */
-    i64 reserved_size {};
-    i64 alignment {};
-    /** What type of object we are storing in this memory entry */
-    e_vulkan_memory_object type;
+    linked_list< vulkan_device_memory_entry > entries;
+    array< i64  > free_entries;
 };
 
 /** Metadata about a Vulkan object type like it's memory type, alignment, preferred heap, etc*/
@@ -132,6 +149,8 @@ struct vulkan_memory
     // Name of the device memory region
     fstring name = "unnamed";
     i64 size {};
+    /** How many bytes to add after each entry as a early corruption check/debugging tool */
+    i64 redzone_bytes = 64;
     i64 device_block_size = 256_MiB;
     /** The fast staging heap is often really small ~256 MiB so the block size must be smaller. */
     i64 staging_block_size = 64_MiB;
@@ -348,9 +367,7 @@ PROC vulkan_buffer_create(
 PROC vulkan_memory_find_best_type_index(
     std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
 
-PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult;
-
-/* PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult; */
+PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult;
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
@@ -359,9 +376,9 @@ PROC vulkan_image_init( render_image* arg ) -> fresult;
 /** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
 
-PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
+PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 
-PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult;
+PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult;
 
 PROC vulkan_init_pipelines() -> void;
 

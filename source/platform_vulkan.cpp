@@ -867,29 +867,60 @@ PROC vulkan_memory_find_best_type_index(
     return result;
 }
 
-PROC vulkan_memory_allocate_block( vulkan_memory_block* arg ) -> fresult
+PROC vulkan_memory_allocate_block( vulkan_memory_block_args* arg ) -> fresult
 {
+    if (arg->memory_type_index < 0)
+    {   VULKAN_ERROR( "Called allocate block with negative memory_type_index" );
+        return false;
+    }
+    if (arg->size <= 0)
+    {   VULKAN_ERROR( "Called allocate block with no valid size" );
+        return false;
+    }
+
     VkMemoryAllocateInfo memory_args {};
     memory_args.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     memory_args.pNext = nullptr;
     memory_args.allocationSize = arg->size;
     memory_args.memoryTypeIndex = arg->memory_type_index;
 
+    vulkan_memory_block* new_block = &arg->context->blocks.push_tail({});
+
     // Actually allocate the block
     auto memory_bad = vkAllocateMemory(
-    g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &arg->memory);
+    g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &new_block->memory);
 
     if (memory_bad)
     {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
                        string_VkResult( memory_bad ) );
         return false;
     }
-    vulkan_label_object( (u64)arg->memory, VK_OBJECT_TYPE_DEVICE_MEMORY, "device_memory_block" );
-    VULKAN_LOGF( "Allocated device memory block. Size: {:>10}", arg->size );
+
+    /* SECTION: Successful allocation, we can fill in the block data, null
+       handle or 0 size is an invalid block */
+    new_block->size = arg->size;
+    new_block->memory_type_index = arg->memory_type_index;
+    new_block->memory_flags = arg->memory_flags;
+
+    vulkan_device_memory_entry start_entry = {
+        .index = 0,
+        .position = 0,
+        // NOTE: Size is only the actively used bytes, unallocated entries have size as 0
+        .size = 0,
+        .reserved_size = arg->size,
+        .alignment = 1,
+        .type = e_vulkan_memory_object::none,
+        .buffer = VK_NULL_HANDLE,
+        .image = VK_NULL_HANDLE
+    };
+    // Add entry to the list and free list
+    auto start_node = new_block->entries.push_tail( start_entry );
+    new_block->free_entries.push_tail( start_node->index );
+
+    vulkan_label_object( (u64)new_block->memory, VK_OBJECT_TYPE_DEVICE_MEMORY, "device_memory_block" );
+    VULKAN_LOGF( "Allocated device memory block. Size: {:>10}", new_block->size );
     return true;
 }
-
-// PROC vulkan_memory_allocate( vulkan_memory* arg ) -> fresult
 
 
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
@@ -991,27 +1022,38 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
 
     if (transfer_destination_requirements.error == false)
     {
-        vulkan_memory_find_best_type_index(
+        i32 memory_type = vulkan_memory_find_best_type_index(
             transfer_destination_requirements.value.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-        );
-        vulkan_memory_block& new_block = arg->blocks.push_tail({});
-        new_block = {
-            .memory = VK_NULL_HANDLE,
-            // NOTE: We're going to use device local memory for the first block
+        ).copy_default( -1 );
+
+        vulkan_memory_block_args block_args = {
+            .context = arg,
             .size = arg->device_block_size,
-            .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            .host_mappable = false
+            .memory_type_index = memory_type,
+            .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         };
-        vulkan_memory_allocate_block( &new_block );
+
+        vulkan_memory_allocate_block( &block_args );
     }
 
     return true;
 }
 
-// Returns location of suballlocated memory
-PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
+PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
 {
+    return false;
+}
+
+PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
+{
+
+    return false;
+}
+
+// Returns location of suballlocated memory
+// PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
+// {
     // PROFILE_SCOPE_FUNCTION();
     // if (arg->memory == nullptr)
     // {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
@@ -1047,12 +1089,12 @@ PROC vulkan_memory_suballocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer
     //     entry.position
     // );
 
-    return true;
-}
+    // return true;
+// }
 
 // Returns location of suballlocated memory
-PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
-{
+// PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult
+// {
     // PROFILE_SCOPE_FUNCTION();
     // if (arg->memory == nullptr)
     // {   VULKAN_ERRORF( "No memory device in object '{}'", arg->name );
@@ -1089,8 +1131,8 @@ PROC vulkan_memory_suballocate_image( vulkan_memory* arg, vulkan_image* image ) 
     //     g_vulkan->logical_device, image->platform_image, arg->memory, entry.position );
 
     // return bind_ok == VK_SUCCESS;
-    return false;
-}
+    // return false;
+// }
 
 PROC vulkan_mesh_init( mesh* arg ) -> fresult
 {
@@ -1115,13 +1157,13 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
         vk_mesh->vertex_buffer = vulkan_buffer_create(
              arg->name, total_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
          );
-        vulkan_memory_suballocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_buffer );
+        vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_buffer );
     }
     if (arg->vertex_indexes_n)
     {   vk_mesh->vertex_indexes_buffer = vulkan_buffer_create(
             arg->name, arg->vertex_indexes_n * sizeof(i32), VK_BUFFER_USAGE_INDEX_BUFFER_BIT
         );
-        vulkan_memory_suballocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_indexes_buffer );
+        vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_indexes_buffer );
     }
     // Shares buffer with vertexies
     // if (arg->vertex_colors.size() > 0)
@@ -1210,10 +1252,10 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
 
-    bool suballocate_ok = vulkan_memory_suballocate_image( &g_vulkan->device_memory, image );
+    bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
     image->staging_buffer = vulkan_buffer_create(
         "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
-    vulkan_memory_suballocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
+    vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
 
     image->id = uuid_generate();
     VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
@@ -1238,7 +1280,7 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
         sizeof( frame_general_uniform),
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
     );
-    fresult allocate_ok = vulkan_memory_suballocate_buffer(
+    fresult allocate_ok = vulkan_memory_allocate_buffer(
         &g_vulkan->device_memory, &arg->general_uniform_buffer );
     if (allocate_ok == false)
     {   return false;
