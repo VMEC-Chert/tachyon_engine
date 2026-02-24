@@ -1035,10 +1035,32 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
             .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         };
 
+        // Allocate some area for staging buffer too
+        VkMemoryPropertyFlags staging_flags = (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+        i32 staging_memory_type = vulkan_memory_find_best_type_index(
+            transfer_destination_requirements.value.memoryTypeBits,
+            staging_flags
+        ).copy_default( -1 );
+
+        vulkan_memory_block_args staging_block_args = {
+            .size = arg-> staging_block_size,
+            .memory_type_index = staging_memory_type,
+            .memory_flags = staging_flags
+        };
+
         vulkan_memory_allocate_block( arg, &block_args );
+        vulkan_memory_allocate_block( arg, &staging_block_args );
     }
 
     return true;
+}
+
+PROC vulkan_memory_get_block( vulkan_memory* context, vulkan_device_memory_entry* entry )
+-> vulkan_memory_block&
+{
+    return context->blocks[ entry->block ];
 }
 
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
@@ -1240,6 +1262,7 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
         vk_mesh->vertex_buffer = vulkan_buffer_create(
              arg->name, total_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
          );
+        vk_mesh->vertex_buffer.memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
         vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_buffer );
     }
     if (arg->vertex_indexes_n)
@@ -1256,49 +1279,51 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     if ( vk_mesh->vertex_indexes_buffer.buffer == VK_NULL_HANDLE)
     {   return false;
     }
+
+    vulkan_memory_block& vertex_block = vulkan_memory_get_block(
+        &g_vulkan->device_memory, &vk_mesh->vertex_buffer.memory );
     void* _data {};
-    // VkResult vertex_map_ok = vkMapMemory(
-    //     g_vulkan->logical_device,
-    //     g_vulkan->device_memory.memory,
-    //     vk_mesh->vertex_buffer.memory.position,
-    //     vk_mesh->vertex_buffer.size,
-    //     // No known useful flags for this function
-    //     0,
-    //     &_data
-    // );
-    // if (vertex_map_ok == VK_SUCCESS)
-    // {
-    //     // Transform buffers into compatible format
-    //     // NOTE: We're copying directly into the mapped range and skipping intermediaries
-    //     raw_pointer data = _data;
-    //     v3* vertex_readhead = arg->vertexes.data;
-    //     i64 vertex_offset = (sizeof(v3));
-    //     i64 vertex_stride = (sizeof(v3) * 2);
-    //     raw_pointer writehead = data;
-    //     for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
-    //     {
-    //         // TODO: Fill in normals
-    //         writehead = data + (vertex_stride * i_vertex);
-    //         // Grab 3 and a time and copy it into the current triangle position
-    //         vertex_readhead = arg->vertexes.address( i_vertex );
-    //         // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
-    //         memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
-    //     }
+    VkResult vertex_map_ok = vkMapMemory(
+        g_vulkan->logical_device,
+        vertex_block.memory,
+        vk_mesh->vertex_buffer.memory.position,
+        vk_mesh->vertex_buffer.size,
+        // No known useful flags for this function
+        0,
+        &_data
+    );
+    if (vertex_map_ok == VK_SUCCESS)
+    {
+        // Transform buffers into compatible format
+        // NOTE: We're copying directly into the mapped range and skipping intermediaries
+        raw_pointer data = _data;
+        v3* vertex_readhead = arg->vertexes.data;
+        i64 vertex_offset = (sizeof(v3));
+        i64 vertex_stride = (sizeof(v3) * 2);
+        raw_pointer writehead = data;
+        for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
+        {
+            // TODO: Fill in normals
+            writehead = data + (vertex_stride * i_vertex);
+            // copy it into the current triangle position
+            vertex_readhead = arg->vertexes.address( i_vertex );
+            // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
+            memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
+        }
 
-    //     // NOTE: Unmaps all ranges associated with the memory at once
-    //     vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
-    // }
+        // NOTE: Unmaps all ranges associated with the memory at once
+        vkUnmapMemory( g_vulkan->logical_device, vertex_block.memory );
+    }
 
-    // Flush memory to make sure its used
-    // VkMappedMemoryRange range {
-    //     .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-    //     .memory = g_vulkan->device_memory.memory,
-    //     .offset = 0,
-    //     .size = u64(vk_mesh->vertex_buffer.size),
-    // };
-    // TODO: remove before flight
-    // vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
-    // return false;
+    // Flush memory to make sure its used on non HOST_COHERENT_BIT
+    VkMappedMemoryRange range {
+        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = vertex_block.memory,
+        .offset = 0,
+        .size = u64(vk_mesh->vertex_buffer.size),
+    };
+    VkResult flush_bad = vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
+    ERROR_GUARD( flush_bad == VK_SUCCESS, "" );
     VULKAN_LOGF( "Initialized vulkan_mesh Name: {}    UUID: {}", arg->name, arg->id );
     return true;
 }
@@ -1372,22 +1397,25 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
     if (allocate_ok == false)
     {   return false;
     }
+
+    vulkan_memory_block& uniform_block = vulkan_memory_get_block(
+        &g_vulkan->device_memory, &arg->general_uniform_buffer.memory );
     void* data = nullptr;
     /** WARNING: Please don't try to unmap memory suballocated from a buffer it
         will immediately invalidate every buffer associated with the device
         memory object. */
-    // VkResult map_bad = vkMapMemory(
-    //     g_vulkan->logical_device,
-    //     g_vulkan->device_memory.memory,
-    //     arg->general_uniform_buffer.memory.position,
-    //     arg->general_uniform_buffer.size,
-    //     // No known useful flags for this function
-    //     0,
-    //     &data
-    // );
-    // if (map_bad)
-    // {   return false;
-    // }
+    VkResult map_bad = vkMapMemory(
+        g_vulkan->logical_device,
+        uniform_block.memory,
+        arg->general_uniform_buffer.memory.position,
+        arg->general_uniform_buffer.size,
+        // No known useful flags for this function
+        0,
+        &data
+    );
+    if (map_bad)
+    {   return false;
+    }
     arg->general_uniform_data = data;
     return true;
 }
@@ -1550,7 +1578,6 @@ PROC vulkan_init() -> fresult
     app_info.engineVersion = VK_MAKE_API_VERSION( 0, 0, 1, 0 );
     app_info.apiVersion = VK_API_VERSION_1_2;
 
-    // for (i64 i=0; i<1)
     VULKAN_LOG( "Enabling Vulkan Layers:" );
     enabled_layers.map_procedure( []( cstring arg ) {
         VULKAN_LOGF( "    {}", arg );

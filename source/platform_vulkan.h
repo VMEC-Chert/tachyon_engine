@@ -377,6 +377,8 @@ PROC vulkan_image_init( render_image* arg ) -> fresult;
 /** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
 
+PROC vulkan_memory_get_block( vulkan_memory context, i64 block_index ) -> vulkan_memory_block&;
+
 /** Returns the index of the best memory type to use for this type. Monad
  * returns with an error if it's bad */
 PROC vulkan_memory_find_best_type_index(
