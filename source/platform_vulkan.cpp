@@ -1099,7 +1099,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         vulkan_memory_node* space_entry = x_entry;
         vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
         // Copy the old data over and then we'll write over it
-        vulkan_device_memory_entry old_entry = new_entry->value;
+        vulkan_device_memory_entry old_entry = space_entry->value;
 
         // Move the space to the next node
         space_entry->value = {
@@ -1120,7 +1120,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         // Is new Vulkan memory objects it just auto aligned to 64 bytes always?
         new_entry->value = {
             .block = old_entry.block,
-            .index = old_entry.index,
+            .index = new_entry->index,
             .position = memory_align( old_entry.position, args.alignment ),
             .reserved_position = old_entry.position,
             // The actual size allocated for the object
