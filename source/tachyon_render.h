@@ -133,6 +133,8 @@ PROC render_thread() -> void;
 
 PROC render_init() -> void;
 
+PROC render_destroy() -> void;
+
 PROC render_tick() -> void;
 
 PROC mesh_init( mesh* arg ) -> fresult;

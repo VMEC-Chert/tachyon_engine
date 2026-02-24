@@ -28,6 +28,7 @@ PROC render_thread() -> void
         render_tick();
         std::this_thread::sleep_until( next_frame );
     }
+    render_destroy();
 }
 
 PROC render_init() -> void
@@ -119,6 +120,11 @@ PROC render_init() -> void
     }
     // Should be good to start the UI now
     ui_init();
+}
+
+PROC render_destroy() -> void
+{
+    vulkan_destroy();
 }
 
 PROC render_tick() -> void
