@@ -1163,6 +1163,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
+    if (buffer == nullptr || buffer->id.valid() == false) { return false; }
+
     VkMemoryRequirements requirements {};
     vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer->buffer, &requirements );
 
@@ -1476,28 +1478,30 @@ PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult
 }
 
 PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64 size )
--> monad<vulkan_transfer_buffer*>
+-> search_result<vulkan_transfer_buffer>
 {
-    monad< vulkan_transfer_buffer* > result;
+    search_result<vulkan_transfer_buffer> result;
     search_result<vulkan_transfer_buffer> search = context->buffers.linear_search(
         [size]( vulkan_transfer_buffer&     arg ) {
             i64 bytes_left = (arg.size - arg.head_size);
             return (bytes_left > size);
         });
     // Copy search result to return even if it's nullptr
-    result.value = search.match;
-    result.error = (search.match_found == false);
+    result = search;
 
     if (context->new_buffer_fail_reset_timer.triggered()) { context->new_buffer_fail_flag = false; }
     if ((! search.match_found) && (! context->new_buffer_fail_flag))
     {   // No suitible transfer buffer, we'll try to make a new one
         vulkan_buffer new_buffer = vulkan_buffer_create(
-            "buffer_transfer", size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+            "buffer_transfer", context->staging_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         );
-        if (new_buffer.id.valid() == false)
-        {   VULKAN_ERRORF( "Failed to create transfer buffer with size: {:>10}", size );
+        fresult allocate_ok = vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &new_buffer );
+
+        if (new_buffer.id.valid() == false || allocate_ok == false)
+        {   VULKAN_ERRORF( "Failed to create transfer buffer with size: {:>10}",
+                           context->staging_buffer_size );
             context->new_buffer_fail_flag = false;
-            result.error = true;
+            result.match_found = false;
             return result;
         }
 
@@ -1509,8 +1513,9 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
 
         /* NOTE: By the time we've reached here we've almost certainly got a new
            buffer so we can leave set the monad to false */
-        result.value = new_transfer;
-        result.error = false;
+        result.match = new_transfer;
+        result.match_found = true;
+        result.index = context->buffers.tail_index();
     }
     return result;
 }
@@ -1519,15 +1524,30 @@ PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
     vulkan_buffer* buffer,
     raw_pointer source,
-    i64 size
+    i64 size,
+    i64 buffer_offset
 ) -> fresult
 {
-    vulkan_transfer_buffer* transfer = vulkan_transfer_find_suitible_buffer( context, size ).value;
-    if (transfer == nullptr)
+    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, size );
+    vulkan_transfer_buffer* transfer_buffer = transfer_search.match;
+    if (transfer_buffer == nullptr)
     {   return false;
     }
-    // TODO
-    return false;
+
+    vulkan_transfer* new_transfer = &context->transfer_queue.push_tail({
+            .buffer_index = transfer_search.index,
+            .position = transfer_buffer->head_size,
+            .size = size,
+            .buffer_offset = buffer_offset,
+            .destination = e_vulkan_memory_object::buffer,
+            .destination_buffer = buffer->buffer,
+            .destination_image = VK_NULL_HANDLE
+    });
+    // Increase transfer buffer used size by size of the buffer
+    // TODO: Does this need to be an aligned transfer?
+    transfer_buffer->head_size += new_transfer->size;
+
+    return true;
 }
 
 PROC vulkan_init() -> fresult

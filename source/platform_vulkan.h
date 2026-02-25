@@ -169,9 +169,14 @@ struct vulkan_memory
 struct vulkan_transfer
 {
     /** Which memory entry/buffer out of the transfer context list we're bound to */
-    i64 buffer_index = 1;
+    i64 buffer_index = -1;
     /** The offset to where in the transfer buffer we are */
     i64 position = 0;
+    /** Size in bytes of the amount we want to transfer */
+    i64 size = 0;
+    /** The position in the buffer to start at using an offset from the start if
+     * we are doing a partial transfer */
+    i64 buffer_offset = 0;
     /** What object the transfer will be copied into */
     e_vulkan_memory_object destination = e_vulkan_memory_object::none;
     VkBuffer destination_buffer = VK_NULL_HANDLE;
@@ -190,6 +195,8 @@ struct vulkan_transfer_buffer
 struct vulkan_transfer_context
 {
     time_duration new_buffer_fail_reset_time = 10s;
+    /** How much memory to allocate for each buffer as a chunk, should be less than 256 MiB usually */
+    i64 staging_buffer_size = 64_MiB;
     /** Flag specifies the last attempt to create a new buffer failed so we can
      * avoid spamming failures */
     bool new_buffer_fail_flag = 0;
@@ -435,7 +442,7 @@ PROC vulkan_init_pipelines() -> void;
 PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult;
 
 PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64 size )
--> monad<vulkan_transfer_buffer*>;
+-> search_result<vulkan_transfer_buffer>;
 
 PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
