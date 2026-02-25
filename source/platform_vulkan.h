@@ -175,7 +175,7 @@ struct vulkan_transfer
     /** Size in bytes of the amount we want to transfer */
     i64 size = 0;
     /** The position in the buffer to start at using an offset from the start if
-     * we are doing a partial transfer */
+     * we are doing a partial transfer, this fine to leave 0 */
     i64 buffer_offset = 0;
     /** What object the transfer will be copied into */
     e_vulkan_memory_object destination = e_vulkan_memory_object::none;

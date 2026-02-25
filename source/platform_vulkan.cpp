@@ -2418,6 +2418,16 @@ PROC vulkan_draw() -> void
     // TODO: Change this if we go back to a 3D pipeline, this was meant for UI rendering
     current_frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
                                      g_render->ui_camera.create_orthographic_projection());
+    /* The memory transfer queue isn't strictly bound to a frame... and I don't
+       know if it will ever need to be...  but it should be safe to reset each
+       time because its passed to the command buffer to save the state... and it
+       only needs to be done once...
+
+       WARNING: HOWEVER, you do have to synchronize with a barrier before starting a new transfer */
+    g_vulkan->transfer.transfer_queue.reset();
+    // Need to reset used position too
+    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
+        arg.head_size = 0; });
 
     // Setup Uniform
     frame_general_uniform* current_uniform = &current_frame->uniform;
@@ -2468,6 +2478,45 @@ PROC vulkan_draw() -> void
 
     // -- Start recording into first subpass.--
     // This is started after beginning a command buffer.
+    // SECTION: Start recording memory transfers before we start any rendering
+
+    vulkan_transfer* x_transfer = nullptr;
+    vulkan_transfer_buffer* x_transfer_buffer = nullptr;
+    for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
+    {
+        x_transfer = g_vulkan->transfer.transfer_queue.address(i);
+        x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
+        switch (x_transfer->destination)
+        {
+            case e_vulkan_memory_object::buffer:
+            {
+                VkBufferCopy copy_region {
+                    .srcOffset = u64(x_transfer->position),
+                    .dstOffset = u64(x_transfer->buffer_offset),
+                    .size = u64(x_transfer->size)
+                };
+                search_result<vulkan_buffer> buffer_search = g_vulkan->buffers.linear_search(
+                    [id = x_transfer_buffer->buffer](vulkan_buffer& arg) {
+                        return arg.id == id; });
+
+                if (buffer_search.match_found)
+                {
+                    vkCmdCopyBuffer(
+                        command_buffer,
+                        buffer_search.match->buffer,
+                        x_transfer->destination_buffer,
+                        1,
+                        &copy_region
+                    );
+                }
+                break;
+            }
+            case e_vulkan_memory_object::image:
+                break;
+            default: break;
+        }
+    }
+
     // Set render pass start information
     VkClearValue clear_value {};
     clear_value.color = {{ 0.2f, 0.0f, 0.2f, 1.0f }};
