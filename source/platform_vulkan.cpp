@@ -803,6 +803,7 @@ PROC vulkan_buffer_create(
     }
     result.id = uuid_generate(); // Valid objects have a non-zero UUID
     vulkan_label_object( (u64)result.buffer, VK_OBJECT_TYPE_BUFFER, name );
+    g_vulkan->buffers.push_tail( result );
 
     // Set cleanup code
     VkBuffer _buffer = result.buffer;
@@ -810,6 +811,7 @@ PROC vulkan_buffer_create(
         vkDestroyBuffer( g_vulkan->logical_device, _buffer, g_vulkan->vk_allocator );
     });
 
+    // TODO: return pointer or uid
     return result;
 }
 
@@ -905,7 +907,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     new_block->host_mappable = (arg->memory_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     new_block->largest_entry = arg->size;
 
-    vulkan_device_memory_entry start_entry = {
+    vulkan_memory_entry start_entry = {
         .block = (context->blocks.size() - 1),
         .index = 0,
         .position = 0,
@@ -1057,16 +1059,16 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult
     return true;
 }
 
-PROC vulkan_memory_get_block( vulkan_memory* context, vulkan_device_memory_entry* entry )
+PROC vulkan_memory_get_block( vulkan_memory* context, vulkan_memory_entry* entry )
 -> vulkan_memory_block&
 {
     return context->blocks[ entry->block ];
 }
 
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
-    -> monad<vulkan_device_memory_entry>
+    -> monad<vulkan_memory_entry>
 {
-    monad<vulkan_device_memory_entry> result;
+    monad<vulkan_memory_entry> result;
     result.error = true;
     i32 i_attempts = 0;
     i32 attempts_limit = 3;
@@ -1121,7 +1123,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         vulkan_memory_node* space_entry = x_entry;
         vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
         // Copy the old data over and then we'll write over it
-        vulkan_device_memory_entry old_entry = space_entry->value;
+        vulkan_memory_entry old_entry = space_entry->value;
 
         // Move the space to the next node
         space_entry->value = {
@@ -1174,7 +1176,7 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
     };
 
-    monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    monad<vulkan_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
     auto entry = entry_ok.value;
     if (entry_ok.error)
     {   VULKAN_ERROR( "Failed to create device memory entry" );
@@ -1183,7 +1185,7 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
     vulkan_memory_block& target_block = arg->blocks[ entry.block ];
 
     // Lookup original memory entry and fill in the type
-    vulkan_device_memory_entry& original_entry =
+    vulkan_memory_entry& original_entry =
     target_block.entries.nodes[ entry.index ].value;
     // NOTE: We can just lookup the buffer type from the buffer list
     original_entry.type = e_vulkan_memory_object::buffer;
@@ -1213,7 +1215,7 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
         .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
 
-    monad<vulkan_device_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
+    monad<vulkan_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
     auto entry = entry_ok.value;
     if (entry_ok.error)
     {   VULKAN_ERROR( "Failed to create device memory entry" );
@@ -1222,7 +1224,7 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
     vulkan_memory_block& target_block = arg->blocks[ entry.block ];
 
     // Lookup original memory entry and fill in the type
-    vulkan_device_memory_entry& original_entry =
+    vulkan_memory_entry& original_entry =
     target_block.entries.nodes[ entry.index ].value;
     // NOTE: We can just lookup the buffer type from the buffer list
     original_entry.type = e_vulkan_memory_object::image;
@@ -1466,6 +1468,66 @@ PROC vulkan_init_pipelines() -> void
         pipeline.shaders.push_tail( fragment_shader );
         vulkan_pipeline_mesh_init( &g_vulkan->ui_mesh_pipeline );
     }
+}
+
+PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult
+{
+    return true;
+}
+
+PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64 size )
+-> monad<vulkan_transfer_buffer*>
+{
+    monad< vulkan_transfer_buffer* > result;
+    search_result<vulkan_transfer_buffer> search = context->buffers.linear_search(
+        [size]( vulkan_transfer_buffer&     arg ) {
+            i64 bytes_left = (arg.size - arg.head_size);
+            return (bytes_left > size);
+        });
+    // Copy search result to return even if it's nullptr
+    result.value = search.match;
+    result.error = (search.match_found == false);
+
+    if (context->new_buffer_fail_reset_timer.triggered()) { context->new_buffer_fail_flag = false; }
+    if ((! search.match_found) && (! context->new_buffer_fail_flag))
+    {   // No suitible transfer buffer, we'll try to make a new one
+        vulkan_buffer new_buffer = vulkan_buffer_create(
+            "buffer_transfer", size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+        );
+        if (new_buffer.id.valid() == false)
+        {   VULKAN_ERRORF( "Failed to create transfer buffer with size: {:>10}", size );
+            context->new_buffer_fail_flag = false;
+            result.error = true;
+            return result;
+        }
+
+        // Must have suceeded, we can push a new buffer
+        vulkan_transfer_buffer* new_transfer = &context->buffers.push_tail({});
+        new_transfer->buffer = new_buffer.id;
+        new_transfer->size = new_buffer.size;
+        new_transfer->head_size = 0;
+
+        /* NOTE: By the time we've reached here we've almost certainly got a new
+           buffer so we can leave set the monad to false */
+        result.value = new_transfer;
+        result.error = false;
+    }
+    return result;
+}
+
+PROC vulkan_transfer_queue_buffer(
+    vulkan_transfer_context* context,
+    vulkan_buffer* buffer,
+    raw_pointer source,
+    i64 size
+) -> fresult
+{
+    vulkan_transfer_buffer* transfer = vulkan_transfer_find_suitible_buffer( context, size ).value;
+    if (transfer == nullptr)
+    {   return false;
+    }
+    // TODO
+    return false;
 }
 
 PROC vulkan_init() -> fresult

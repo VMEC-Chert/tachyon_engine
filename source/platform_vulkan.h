@@ -84,7 +84,7 @@ struct vulkan_heap
     VkMemoryHeapFlags heap_flags;
 };
 
-struct vulkan_device_memory_entry
+struct vulkan_memory_entry
 {
     i64 block {};
     /* Where in the list the entry belongs to
@@ -105,7 +105,7 @@ struct vulkan_device_memory_entry
     e_vulkan_memory_object type;
 };
 
-using vulkan_memory_node = linked_list<vulkan_device_memory_entry>::t_node;
+using vulkan_memory_node = linked_list<vulkan_memory_entry>::t_node;
 
 struct vulkan_memory_block_args
 {
@@ -131,7 +131,7 @@ struct vulkan_memory_block
     VkMemoryPropertyFlags memory_flags = 0;
     bool host_mappable = false;
 
-    linked_list< vulkan_device_memory_entry > entries;
+    linked_list< vulkan_memory_entry > entries;
     array< i64  > free_entries;
     i64 largest_entry = 0;
 };
@@ -162,10 +162,40 @@ struct vulkan_memory
 
     array< vulkan_object_memory_info > object_infos;
     array< vulkan_memory_block > blocks;
-    array< vulkan_device_memory_entry > entries;
-    /* linked_list<vulkan_device_memory_entry> used; */
-    /* linked_list<vulkan_device_memory_entry> free; */
+
     i64 head_size {};
+};
+
+struct vulkan_transfer
+{
+    /** Which memory entry/buffer out of the transfer context list we're bound to */
+    i64 buffer_index = 1;
+    /** The offset to where in the transfer buffer we are */
+    i64 position = 0;
+    /** What object the transfer will be copied into */
+    e_vulkan_memory_object destination = e_vulkan_memory_object::none;
+    VkBuffer destination_buffer = VK_NULL_HANDLE;
+    VkImage destination_image = VK_NULL_HANDLE;
+};
+
+struct vulkan_transfer_buffer
+{
+    uid buffer;
+    /** How large is the backing buffer (convenience variable) */
+    i64 size = 0;
+    /** How much of the buffer has been used for pending transfers so far */
+    i64 head_size = 0;
+};
+
+struct vulkan_transfer_context
+{
+    time_duration new_buffer_fail_reset_time = 10s;
+    /** Flag specifies the last attempt to create a new buffer failed so we can
+     * avoid spamming failures */
+    bool new_buffer_fail_flag = 0;
+    time_periodic new_buffer_fail_reset_timer {new_buffer_fail_reset_time};
+    array< vulkan_transfer > transfer_queue;
+    array< vulkan_transfer_buffer > buffers;
 };
 
 struct vulkan_allocate_args
@@ -190,7 +220,7 @@ struct vulkan_buffer
     // State
     VkBuffer buffer {};
     // Associated memory allocated from device
-    vulkan_device_memory_entry memory;
+    vulkan_memory_entry memory;
     /** Optional */
     VkMemoryPropertyFlags memory_flags;
 };
@@ -209,7 +239,7 @@ struct vulkan_image
     uid associated_image;
     VkImage platform_image;
     time_monotonic_ns update_timestamp = 0;
-    vulkan_device_memory_entry memory;
+    vulkan_memory_entry memory;
     vulkan_buffer staging_buffer;
 };
 
@@ -294,6 +324,8 @@ struct vulkan_context
     vulkan_memory device_memory;
     i32 mesh_debug_mode_cycle = 0;
     e_vulkan_shader_debug mesh_debug_mode = e_vulkan_shader_debug::none;
+
+    vulkan_transfer_context transfer;
 
     mesh* draw_mesh;
 
@@ -391,13 +423,26 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     from device memory as an internal memory manager but without a backing
     type. */
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
--> monad<vulkan_device_memory_entry>;
+-> monad<vulkan_memory_entry>;
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 
 PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult;
 
 PROC vulkan_init_pipelines() -> void;
+
+/** Does nothing at present. You SHOULD call it anyway */
+PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult;
+
+PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64 size )
+-> monad<vulkan_transfer_buffer*>;
+
+PROC vulkan_transfer_queue_buffer(
+    vulkan_transfer_context* context,
+    vulkan_buffer* buffer,
+    raw_pointer source,
+    i64 size
+) -> fresult;
 
 PROC vulkan_init() -> fresult;
 
