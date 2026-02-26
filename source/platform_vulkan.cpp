@@ -841,9 +841,10 @@ PROC vulkan_memory_find_best_type_index(
         preferred_flags_match = 0;
 
         bool requirement_fulfilled = valid_type_bits[i];
+        std::bitset<32> preferred = preferred_flags;
         preferred_flags_match = (memory_type & std::bitset<32>(preferred_flags));
-        // Count set bits
-        x_missing_flag_n = preferred_flags_match.count();
+        // Flags not present in type using bitwise trick
+        x_missing_flag_n = (preferred & (~memory_type)).count();
 
         // Print heap statistics
         VULKAN_LOGF( "Memory Type Property Flags: {:b}", x_memory_type.propertyFlags );
@@ -852,7 +853,8 @@ PROC vulkan_memory_find_best_type_index(
             i, x_heap.size, x_heap.flags
         );
 
-        bool more_than_one_exact_match = (x_missing_flag_n == 0) && (best_missing_flag_n == 0);
+        bool more_than_one_exact_match = (x_missing_flag_n == 0) && (best_missing_flag_n == 0) &&
+            (best_index != -1);
         VULKAN_LOGF( "Found more than one suitible memory type {} and {} for memory type bits {:b}",
                      i, best_index, preferred_flags );
         bool less_missing_flags = (x_missing_flag_n < best_missing_flag_n);
@@ -1084,13 +1086,9 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
                 return (enough_space && suitible_memory_type);
             });
         vulkan_memory_block* target_block = block_search.match;
-        if (target_block == nullptr)
-        {   result.error = true;
-            VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
-            return result;
-        }
+
         // Find free entry in list
-        i64 list_size = target_block->free_entries.size();
+        i64 list_size = (target_block ? target_block->free_entries.size() : 0);
         vulkan_memory_node* x_entry = nullptr;
         bool space_found = false;
         for (i64 i=0; i < list_size; ++i)
@@ -1157,6 +1155,9 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         // Exit the loop
         break;
     }
+    if (result.error)
+    {   VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
+    }
     return result;
 }
 
@@ -1168,14 +1169,17 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
     VkMemoryRequirements requirements {};
     vkGetBufferMemoryRequirements( g_vulkan->logical_device, buffer->buffer, &requirements );
 
+    // Default to device local memory if not specified
+    VkMemoryPropertyFlags memory_flags = (buffer->memory_flags ? buffer->memory_flags :
+                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
     i32 best_index = vulkan_memory_find_best_type_index(
-        requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ).copy_default(-1);
+        requirements.memoryTypeBits, buffer->memory_flags ).copy_default(-1);
     vulkan_allocate_args allocate_args {
         .size = i64(requirements.size),
         .alignment = i64(requirements.alignment),
         .memory_type_index = best_index,
-        .memory_flags = (buffer->memory_flags ? buffer->memory_flags :
-                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+        .memory_flags = memory_flags,
     };
 
     monad<vulkan_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
@@ -1473,6 +1477,8 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
         vulkan_buffer new_buffer = vulkan_buffer_create(
             "buffer_transfer", context->staging_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         );
+        new_buffer.memory_flags = (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         fresult allocate_ok = vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &new_buffer );
 
         if (new_buffer.id.valid() == false || allocate_ok == false)
@@ -1510,9 +1516,9 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
         );
 
         // Copy the map pointer and mark if we mapped successfully
-        new_transfer->mapped = map_data;
+        new_transfer->mapped_data = map_data;
         new_transfer->mapped = (map_bad == VK_SUCCESS);
-        ERROR_GUARD( map_bad, "Can't continue if we have a map failure" );
+        ERROR_GUARD( new_transfer->mapped, "Can't continue if we have a map failure" );
     }
     return result;
 }
@@ -2476,7 +2482,6 @@ PROC vulkan_draw() -> void
     vulkan_transfer_buffer* x_transfer_buffer = nullptr;
     for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
     {
-        // TODO: Copy buffer through map memory before copying again to device memory
         x_transfer = g_vulkan->transfer.transfer_queue.address(i);
         x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
         switch (x_transfer->destination)
