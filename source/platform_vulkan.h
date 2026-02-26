@@ -199,6 +199,8 @@ struct vulkan_transfer_context
     time_duration new_buffer_fail_reset_time = 10s;
     /** How much memory to allocate for each buffer as a chunk, should be less than 256 MiB usually */
     i64 staging_buffer_size = 64_MiB;
+    i64 redzone_size = 64;
+
     /** Flag specifies the last attempt to create a new buffer failed so we can
      * avoid spamming failures */
     bool new_buffer_fail_flag = 0;
@@ -410,6 +412,12 @@ PROC vulkan_buffer_create(
     VkBufferUsageFlags type,
     VkSharingMode sharing_mode = VK_SHARING_MODE_EXCLUSIVE
 )   -> vulkan_buffer;
+
+/** Helper function to calculate vertex buffer size based on the current function
+
+    NOTE: PLEASE use this function instead of calculating it manually to prevent
+    horrible memroy issues. */
+PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64;
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 

@@ -1247,6 +1247,11 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
     return (bind_bad == VK_SUCCESS);
 }
 
+PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64
+{
+    return (sizeof(v3) * vertexes * 2);
+}
+
 PROC vulkan_mesh_init( mesh* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
@@ -1292,8 +1297,9 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     }
     /** NOTE: We're doing transfer operations instead of direct memory maps now
         NOTE: This is not a Vulkan operation, the actual operation is a map + a cmdCopyBufferXXX */
+    i64 vertex_buffer_size = vulkan_vertex_buffer_size( arg->vertexes_n );
     auto queue_bad = vulkan_transfer_queue_buffer(
-        &g_vulkan->transfer, &vk_mesh->vertex_buffer, sizeof(v3) * arg->vertexes_n, 0 );
+        &g_vulkan->transfer, &vk_mesh->vertex_buffer, vertex_buffer_size, 0 );
     ERROR_GUARD( (! queue_bad.error), "Can't really draw anything if this happens" );
     raw_pointer data = queue_bad.value.data;
     v3* vertex_readhead = arg->vertexes.data;
@@ -1549,11 +1555,11 @@ PROC vulkan_transfer_queue_buffer(
     });
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
-    transfer_buffer->head_size += new_transfer->size;
+    transfer_buffer->head_size += new_transfer->size + redzone;
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
-    result.value.size = transfer_buffer->size;
+    result.value.size = new_transfer->size;
     result.error = (transfer_buffer->mapped != true);
     return result;
 }
@@ -2435,9 +2441,16 @@ PROC vulkan_draw() -> void
      // (take copy on purpose for temporary camera data)
     frame_general_uniform uniform_copy = *current_uniform;
     uniform_copy.camera = current_uniform->camera.unreal_to_vulkan().transpose();
-    if (current_frame->general_uniform_data)
+
+    auto uniform_queue_bad = vulkan_transfer_queue_buffer(
+        &g_vulkan->transfer,
+        &current_frame->general_uniform_buffer,
+        sizeof(frame_general_uniform),
+        0
+    );
+    if (! uniform_queue_bad.error)
     {
-        memory_copy<frame_general_uniform>( current_frame->general_uniform_data, &uniform_copy, 1 );
+        memory_copy<frame_general_uniform>( uniform_queue_bad.value.data, &uniform_copy, 1 );
     }
 
     // Update the descriptor resource associated with the uniform
@@ -2524,7 +2537,8 @@ PROC vulkan_draw() -> void
                     vkCmdPipelineBarrier(
                         command_buffer,
                         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        // VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT is depreceated aparently
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT,
                         // TODO: Investigate what dependency bits to use
                         0,
@@ -2604,10 +2618,9 @@ PROC vulkan_draw() -> void
         mesh* draw_mesh = current_frame->draw_queue_mesh[i];
 
         // Test Draw Meshes
-        // draw_mesh = g_vulkan->draw_mesh;
         // draw_mesh = &g_vulkan->test_whale;
         // draw_mesh = &g_vulkan->test_teapot;
-
+        draw_mesh = &g_vulkan->test_ui_triangle;
         // make test UI meshes resize with window for convenience
         g_vulkan->test_ui_triangle.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
         g_vulkan->test_ui_square.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
@@ -2759,6 +2772,7 @@ PROC vulkan_draw() -> void
             if (draw_image->write_timestamp > vk_draw_image->update_timestamp)
             {
                 void* image_stage = nullptr;
+                // TODO: Initiate transfer with image
                 // VkResult map_bad = vkMapMemory(
                 //     g_vulkan->logical_device,
                 //     g_vulkan->device_memory.memory,
@@ -2791,14 +2805,15 @@ PROC vulkan_draw() -> void
                     .imageOffset = { 0, 0, 0 },
                     .imageExtent { u32(draw_image->image.size.x), u32(draw_image->image.size.y) }
                 };
-                vkCmdCopyBufferToImage(
-                    command_buffer,
-                    vk_draw_image->staging_buffer.buffer,
-                    vk_draw_image->platform_image,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1,
-                    &copy_region
-                );
+                // TODO: Setup image transfer
+                // vkCmdCopyBufferToImage(
+                //     command_buffer,
+                //     vk_draw_image->staging_buffer.buffer,
+                //     vk_draw_image->platform_image,
+                //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                //     1,
+                //     &copy_region
+                // );
             }
 
             // TODO: Should already be in sreenspace coordinates by this time
