@@ -190,6 +190,8 @@ struct vulkan_transfer_buffer
     i64 size = 0;
     /** How much of the buffer has been used for pending transfers so far */
     i64 head_size = 0;
+    raw_pointer mapped_data;
+    bool mapped = false;
 };
 
 struct vulkan_transfer_context
@@ -447,10 +449,9 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
 PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
     vulkan_buffer* buffer,
-    raw_pointer source,
     i64 size,
     i64 buffer_offset
-) -> fresult;
+) -> monad< dynamic_span<void> >;
 
 PROC vulkan_init() -> fresult;
 

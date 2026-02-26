@@ -1281,12 +1281,17 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     // }
 
 
-    // Transform buffers into compatible format
-    // NOTE: We're copying directly into the mapped range and skipping intermediaries
+    /** Transform buffers into compatible format
+        NOTE: We're now copying directly into the mapped range and skipping intermediaries. */
     if ( vk_mesh->vertex_buffer.buffer == VK_NULL_HANDLE)
     {   return false;
     }
-    raw_pointer data = g_thread->scratch->allocate_raw( sizeof(v3) * arg->vertexes_n);
+    /** NOTE: We're doing transfer operations instead of direct memory maps now
+        NOTE: This is not a Vulkan operation, the actual operation is a map + a cmdCopyBufferXXX */
+    auto queue_bad = vulkan_transfer_queue_buffer(
+        &g_vulkan->transfer, &vk_mesh->vertex_buffer, sizeof(v3) * arg->vertexes_n, 0 );
+    ERROR_GUARD( (! queue_bad.error), "Can't really draw anything if this happens" );
+    raw_pointer data = queue_bad.value.data;
     v3* vertex_readhead = arg->vertexes.data;
     i64 vertex_offset = (sizeof(v3));
     i64 vertex_stride = (sizeof(v3) * 2);
@@ -1300,12 +1305,6 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
         // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
         memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
     }
-
-    // NOTE: We're doing transfer operations instead of direct memory maps now
-    // NOTE: This is not a Vulkan operation, the actual operation is a map + a cmdCopyBufferXXX
-    fresult queue_ok = vulkan_transfer_queue_buffer(
-        &g_vulkan->transfer, &vk_mesh->vertex_buffer, data, sizeof(v3) * arg->vertexes_n, 0 );
-    ERROR_GUARD( queue_ok, "Can't really draw anything if this happens" );
 
     VULKAN_LOGF( "Initialized vulkan_mesh Name: {}    UUID: {}", arg->name, arg->id );
     return true;
@@ -1495,6 +1494,25 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
         result.match = new_transfer;
         result.match_found = true;
         result.index = context->buffers.tail_index();
+
+        // Map the entire buffer for use
+        void* map_data = nullptr;
+        VkMemoryMapFlags map_flags = 0x0;
+        vulkan_memory_block& block =  vulkan_memory_get_block(
+            &g_vulkan->device_memory, &new_buffer.memory );
+        VkResult map_bad = vkMapMemory(
+            g_vulkan->logical_device,
+            block.memory,
+            new_buffer.memory.position,
+            VK_WHOLE_SIZE,
+            map_flags,
+            &map_data
+        );
+
+        // Copy the map pointer and mark if we mapped successfully
+        new_transfer->mapped = map_data;
+        new_transfer->mapped = (map_bad == VK_SUCCESS);
+        ERROR_GUARD( map_bad, "Can't continue if we have a map failure" );
     }
     return result;
 }
@@ -1502,15 +1520,16 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
 PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
     vulkan_buffer* buffer,
-    raw_pointer source,
     i64 size,
     i64 buffer_offset
-) -> fresult
+) -> monad< dynamic_span<void> >
 {
+    monad< dynamic_span<void> > result;
     auto transfer_search = vulkan_transfer_find_suitible_buffer( context, size );
     vulkan_transfer_buffer* transfer_buffer = transfer_search.match;
     if (transfer_buffer == nullptr)
-    {   return false;
+    {   result.error = true;
+        return result;
     }
 
     vulkan_transfer* new_transfer = &context->transfer_queue.push_tail({
@@ -1526,7 +1545,11 @@ PROC vulkan_transfer_queue_buffer(
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size;
 
-    return true;
+    // Return the pointer to the tranfer's location in the mapped buffer
+    result.value.data = transfer_buffer->mapped_data + new_transfer->position;
+    result.value.size = transfer_buffer->size;
+    result.error = (transfer_buffer->mapped != true);
+    return result;
 }
 
 PROC vulkan_init() -> fresult
