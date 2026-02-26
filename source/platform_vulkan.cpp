@@ -1280,54 +1280,33 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     // {   vulkan_memory_suballocate_buffer( g_vulkan->device_memory, vk_mesh->color_buffer );
     // }
 
-    if ( vk_mesh->vertex_indexes_buffer.buffer == VK_NULL_HANDLE)
+
+    // Transform buffers into compatible format
+    // NOTE: We're copying directly into the mapped range and skipping intermediaries
+    if ( vk_mesh->vertex_buffer.buffer == VK_NULL_HANDLE)
     {   return false;
     }
-
-    vulkan_memory_block& vertex_block = vulkan_memory_get_block(
-        &g_vulkan->device_memory, &vk_mesh->vertex_buffer.memory );
-    void* _data {};
-    VkResult vertex_map_ok = vkMapMemory(
-        g_vulkan->logical_device,
-        vertex_block.memory,
-        vk_mesh->vertex_buffer.memory.position,
-        vk_mesh->vertex_buffer.size,
-        // No known useful flags for this function
-        0,
-        &_data
-    );
-    if (vertex_map_ok == VK_SUCCESS)
+    raw_pointer data = g_thread->scratch->allocate_raw( sizeof(v3) * arg->vertexes_n);
+    v3* vertex_readhead = arg->vertexes.data;
+    i64 vertex_offset = (sizeof(v3));
+    i64 vertex_stride = (sizeof(v3) * 2);
+    raw_pointer writehead = data;
+    for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
     {
-        // Transform buffers into compatible format
-        // NOTE: We're copying directly into the mapped range and skipping intermediaries
-        raw_pointer data = _data;
-        v3* vertex_readhead = arg->vertexes.data;
-        i64 vertex_offset = (sizeof(v3));
-        i64 vertex_stride = (sizeof(v3) * 2);
-        raw_pointer writehead = data;
-        for (int i_vertex = 0; i_vertex < arg->vertexes_n; ++i_vertex)
-        {
-            // TODO: Fill in normals
-            writehead = data + (vertex_stride * i_vertex);
-            // copy it into the current triangle position
-            vertex_readhead = arg->vertexes.address( i_vertex );
-            // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
-            memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
-        }
-
-        // NOTE: Unmaps all ranges associated with the memory at once
-        vkUnmapMemory( g_vulkan->logical_device, vertex_block.memory );
+        // TODO: Fill in normals
+        writehead = data + (vertex_stride * i_vertex);
+        // copy it into the current triangle position
+        vertex_readhead = arg->vertexes.address( i_vertex );
+        // memory_copy<v3>( writehead + 0, normal_readhead, 1 );
+        memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
     }
 
-    // Flush memory to make sure its used on non HOST_COHERENT_BIT
-    VkMappedMemoryRange range {
-        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-        .memory = vertex_block.memory,
-        .offset = 0,
-        .size = u64(vk_mesh->vertex_buffer.size),
-    };
-    VkResult flush_bad = vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
-    ERROR_GUARD( flush_bad == VK_SUCCESS, "" );
+    // NOTE: We're doing transfer operations instead of direct memory maps now
+    // NOTE: This is not a Vulkan operation, the actual operation is a map + a cmdCopyBufferXXX
+    fresult queue_ok = vulkan_transfer_queue_buffer(
+        &g_vulkan->transfer, &vk_mesh->vertex_buffer, data, sizeof(v3) * arg->vertexes_n, 0 );
+    ERROR_GUARD( queue_ok, "Can't really draw anything if this happens" );
+
     VULKAN_LOGF( "Initialized vulkan_mesh Name: {}    UUID: {}", arg->name, arg->id );
     return true;
 }
@@ -2286,7 +2265,7 @@ PROC vulkan_tick() -> void
         vulkan_init();
     }
 
-
+    // New tick setup
     vulkan_draw();
 }
 
@@ -2418,16 +2397,6 @@ PROC vulkan_draw() -> void
     // TODO: Change this if we go back to a 3D pipeline, this was meant for UI rendering
     current_frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
                                      g_render->ui_camera.create_orthographic_projection());
-    /* The memory transfer queue isn't strictly bound to a frame... and I don't
-       know if it will ever need to be...  but it should be safe to reset each
-       time because its passed to the command buffer to save the state... and it
-       only needs to be done once...
-
-       WARNING: HOWEVER, you do have to synchronize with a barrier before starting a new transfer */
-    g_vulkan->transfer.transfer_queue.reset();
-    // Need to reset used position too
-    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
-        arg.head_size = 0; });
 
     // Setup Uniform
     frame_general_uniform* current_uniform = &current_frame->uniform;
@@ -2484,6 +2453,7 @@ PROC vulkan_draw() -> void
     vulkan_transfer_buffer* x_transfer_buffer = nullptr;
     for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
     {
+        // TODO: Copy buffer through map memory before copying again to device memory
         x_transfer = g_vulkan->transfer.transfer_queue.address(i);
         x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
         switch (x_transfer->destination)
@@ -2508,6 +2478,32 @@ PROC vulkan_draw() -> void
                         1,
                         &copy_region
                     );
+
+                    // NOTE: I guess we need a seperate barrier depending on the memory object?
+                    VkBufferMemoryBarrier transfer_barrier {
+                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        .pNext = nullptr,
+                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                        // TODO: What is the destination mask meant to be?
+                        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                        // TODO: Revise if the queue family changes
+                        .srcQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
+                        .dstQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
+                        .buffer = x_transfer->destination_buffer,
+                        copy_region.dstOffset,
+                        copy_region.size
+                    };
+                    vkCmdPipelineBarrier(
+                        command_buffer,
+                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        // TODO: Investigate what dependency bits to use
+                        0,
+                        0, nullptr,
+                        1, &transfer_barrier,
+                        0, nullptr
+                    );
                 }
                 break;
             }
@@ -2516,6 +2512,21 @@ PROC vulkan_draw() -> void
             default: break;
         }
     }
+    /* The memory transfer queue isn't strictly bound to a frame... and I don't
+       know if it will ever need to be...  but it should be safe to reset each
+       time because its passed to the command buffer to save the state... and it
+       only needs to be done once...
+
+       WARNING: HOWEVER, you do have to synchronize with a barrier before
+       starting a new transfer
+
+       NOTE: I keep on moving this because of issues with resetting it too early
+       and the more time I relocate it the more I think my current Vulkan
+       organization is wrong in some way */
+    g_vulkan->transfer.transfer_queue.reset();
+    // Need to reset used position too
+    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
+        arg.head_size = 0; });
 
     // Set render pass start information
     VkClearValue clear_value {};

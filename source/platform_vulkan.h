@@ -448,7 +448,8 @@ PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
     vulkan_buffer* buffer,
     raw_pointer source,
-    i64 size
+    i64 size,
+    i64 buffer_offset
 ) -> fresult;
 
 PROC vulkan_init() -> fresult;
