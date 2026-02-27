@@ -107,7 +107,7 @@ namespace tyon
         }
         // TODO: Hardcoded main window
         g_sdl->main_window = arg;
-        &g_sdl->windows.push_tail( platform_window );
+        (void)&g_sdl->windows.push_tail( platform_window );
 
         TYON_LOG( "Showing SDL Window" );
         SDL_ShowWindow( platform_window.handle );
