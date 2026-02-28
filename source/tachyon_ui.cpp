@@ -44,6 +44,8 @@ namespace tyon
         g_ui->test_image.image.data = memory_allocate<rgba>( 400 * 400 );
         g_ui->test_image.image.size = { 400, 400 };
         g_ui->test_image.id = uuid_generate();
+        // TODO: Doesn't preserve aspect ratio
+        g_ui->test_image.draw_region.size = v2_f32{ 200, 200 };
         memset( g_ui->test_image.image.data, 0xFF, g_ui->test_image.image.size_bytes() );
         g_ui->test_image.write_timestamp;
 

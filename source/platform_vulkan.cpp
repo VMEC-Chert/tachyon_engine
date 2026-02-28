@@ -2922,16 +2922,22 @@ PROC vulkan_draw() -> void
                 region.position = { 0.0, 0.0 };
                 region.size = { f32(present.width), f32(present.height) };
             }
+
+            v2_f32 clip_down_left = clip.position;
+            v2_f32 clip_up_right = clip.position + clip.size;
+            v2_f32 draw_down_right = region.position;
+            v2_f32 draw_up_right = region.position + clip.size;
             VkImageBlit vk_region {
                 .srcSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .srcOffsets= {
-                    VkOffset3D {i32(clip.position.x), i32(clip.position.y), 0},
-                    VkOffset3D { i32(clip.size.x), i32(clip.size.y), 1 }
+                    // Flip
+                    VkOffset3D {i32(clip_down_left.x), i32(clip_down_left.y), 0},
+                    VkOffset3D { i32(clip_up_right.x), i32(clip_up_right.y), 1 }
                 },
                 .dstSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .dstOffsets = {
-                    VkOffset3D {i32(region.position.x), i32(region.position.y), 0},
-                    VkOffset3D { i32(region.size.x), i32(region.size.y), 1 }
+                    VkOffset3D {i32(draw_down_right.x), i32(draw_down_right.y), 0},
+                    VkOffset3D { i32(draw_up_right.x), i32(draw_up_right.y), 1 }
                 },
             };
 
