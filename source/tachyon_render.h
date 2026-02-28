@@ -122,6 +122,12 @@ struct render_context
     /* Orthographic UI camera */
     scene_camera ui_camera;
 
+     /* TODO: You know, I'm not sure if we should store images and meshes here.
+        They're kind of very generic things and we leave subsystems to do whatever they want with.
+        Yet that kind of runs counter to them having IDs. */
+    array< render_image > images;
+    array< mesh > meshes;
+
     array< mesh* > draw_queue_mesh;
     array< render_image* > draw_queue_image;
 };

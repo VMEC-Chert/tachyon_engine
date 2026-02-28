@@ -144,6 +144,12 @@ struct vulkan_object_memory_info
     i64 alignment = 0;
 };
 
+struct vulkan_memory_info
+{
+    bool pcie_bar_memory_limitation = true;
+    i64 pcie_bar_heap_size = true;
+};
+
 /* Devie memory allocator */
 struct vulkan_memory
 {
@@ -155,7 +161,8 @@ struct vulkan_memory
     /** How many bytes to add after each entry as a early corruption check/debugging tool */
     i64 redzone_bytes = 64;
     i64 device_block_size = 256_MiB;
-    /** The fast staging heap is often really small ~256 MiB so the block size must be smaller. */
+    /** The fast staging heap is often really small ~256 MiB so the block size must be smaller.
+     NOTE: Really should be a bit smaller than the staging block size for robustness */
     i64 staging_block_size = 64_MiB;
     /** Host accessible memory, behaves similar to unified memory. We usually have a lot of this. */
     i64 unified_block_size = 256_MiB;
@@ -198,8 +205,8 @@ struct vulkan_transfer_context
 {
     time_duration new_buffer_fail_reset_time = 10s;
     /** How much memory to allocate for each buffer as a chunk, should be less than 256 MiB usually */
-    i64 staging_buffer_size = 64_MiB;
-    i64 redzone_size = 64;
+    i64 staging_buffer_size = 63_MiB;
+    i64 redzone_bytes = 64;
 
     /** Flag specifies the last attempt to create a new buffer failed so we can
      * avoid spamming failures */
@@ -217,6 +224,8 @@ struct vulkan_allocate_args
     VkMemoryPropertyFlags memory_flags;
     /** Optional arg */
     i32 force_heap_index = -1;
+    /** Optional, used for CPU transfers, prefers to be on the fast PCIe BAR memory */
+    bool transfer_buffer = false;
 };
 
 struct vulkan_buffer
@@ -234,6 +243,8 @@ struct vulkan_buffer
     vulkan_memory_entry memory;
     /** Optional */
     VkMemoryPropertyFlags memory_flags;
+    /** Optional, used for CPU transfers, prefers to be on the fast PCIe BAR memory */
+    bool transfer_buffer = false;
 };
 
 struct vulkan_mesh
@@ -272,7 +283,8 @@ struct vulkan_frame
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;
     /* VkDeviceMemory general_uniform_memory; */
-    raw_pointer general_uniform_data;
+    // NOTE: Need staging buffer for most objects, revisit this later if it's faster
+    // raw_pointer general_uniform_data;
     /* VkDescriptorPool descriptor_resource_pool; */
     VkDescriptorSet vk_resource;
     array<mesh*> draw_queue_mesh;
@@ -460,6 +472,13 @@ PROC vulkan_transfer_queue_buffer(
     i64 size,
     i64 buffer_offset
 ) -> monad< dynamic_span<void> >;
+
+/** Do setup to prepare image so it is present and ready to draw on the GPU
+
+    Images like most Vulkan need to be prepared and transfered in a special way
+    before it can be drawn for render, this function serves to do anything
+    related to that, transfering data, generating internal state, etc. */
+PROC vulkan_image_prepare( render_image* arg ) -> fresult;
 
 PROC vulkan_init() -> fresult;
 

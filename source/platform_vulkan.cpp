@@ -819,6 +819,7 @@ PROC vulkan_memory_find_best_type_index(
     std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>
 {
     monad<i32> result;
+    static bool first_run = true;
     // Find all of the memory properties to search through
     VkPhysicalDeviceMemoryProperties memory_props {};
     vkGetPhysicalDeviceMemoryProperties( g_vulkan->device, &memory_props );
@@ -826,9 +827,9 @@ PROC vulkan_memory_find_best_type_index(
     i32 best_index = -1;
     /** How many flags are missing */
     i32 best_missing_flag_n = 32;
+    std::bitset<32> best_flag = ~u32(0);
     /** If the current memory type being used an exact match of preferred flags */
     i32 x_missing_flag_n = 32;
-    std::bitset<32> preferred_flags_match = 0;
     for (i32 i=0; i < memory_props.memoryTypeCount; ++i)
     {
         VkMemoryType x_memory_type = memory_props.memoryTypes[ i ];
@@ -838,35 +839,42 @@ PROC vulkan_memory_find_best_type_index(
 
         // Reset these variables before we start working on them
         x_missing_flag_n = 32;
-        preferred_flags_match = 0;
 
-        bool requirement_fulfilled = valid_type_bits[i];
-        std::bitset<32> preferred = preferred_flags;
-        preferred_flags_match = (memory_type & std::bitset<32>(preferred_flags));
+        const std::bitset<32> preferred = preferred_flags;
+        const bool flags_different = absolute( preferred.count() - memory_type.count() );
         // Flags not present in type using bitwise trick
         x_missing_flag_n = (preferred & (~memory_type)).count();
 
         // Print heap statistics
-        VULKAN_LOGF( "Memory Type Property Flags: {:b}", x_memory_type.propertyFlags );
-        VULKAN_LOGF(
-            "Heap Stats: Heap Index: [{}] Heap Size : [{}] Heap Flags: [{:b}]",
-            i, x_heap.size, x_heap.flags
-        );
+        if (first_run)
+        {
+            VULKAN_LOGF( "{:<40}Memory Type Index: {} Property Flags: {:b}",
+                         "", i, x_memory_type.propertyFlags );
+            VULKAN_LOGF(
+                "Heap Stats: Heap Index: [{}] Heap Size : [{}] Heap Flags: [{:b}]",
+                x_memory_type.heapIndex, x_heap.size, x_heap.flags
+            );
+        }
 
         bool more_than_one_exact_match = (x_missing_flag_n == 0) && (best_missing_flag_n == 0) &&
             (best_index != -1);
-        VULKAN_LOGF( "Found more than one suitible memory type {} and {} for memory type bits {:b}",
+        if (more_than_one_exact_match)
+        {   VULKAN_LOGF( "Found more than one suitible memory type {} and {} for memory type bits {:b}",
                      i, best_index, preferred_flags );
+        }
+
         bool less_missing_flags = (x_missing_flag_n < best_missing_flag_n);
         if (less_missing_flags)
         {   best_index = i;
             best_missing_flag_n = x_missing_flag_n;
+            best_flag = memory_type;
         }
     }
     if (best_index == -1)
     {   VULKAN_ERROR( "No valid memory type found! typeBits {} preferred_flags {}" )
         result.error = true;
     }
+    first_run = false;
     result.value = best_index;
     return result;
 }
@@ -908,6 +916,11 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     new_block->memory_flags = arg->memory_flags;
     new_block->host_mappable = (arg->memory_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     new_block->largest_entry = arg->size;
+    // Give a fairly generous amount of entries, we will use these alot
+    // TODO: This is kind of a hack to try to evade pointer invalidation issues, this needs to
+    // be fixed in a more sophisticated way
+    new_block->entries.nodes = {};
+    new_block->entries.nodes.resize( 4096 );
 
     vulkan_memory_entry start_entry = {
         .block = (context->blocks.size() - 1),
@@ -1108,7 +1121,9 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         {
             // No space, try to allocate a new block
             vulkan_memory_block_args block_args {
-                .size = context->device_block_size,
+                // NOTE: Need to use smaller blocks if using small PCIe BAR staging memory
+                .size = (args.transfer_buffer ? context->staging_block_size :
+                         context->device_block_size),
                 .memory_type_index = args.memory_type_index,
                 .memory_flags = args.memory_flags
             };
@@ -1117,26 +1132,30 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         }
         /* Space found, split the entry into 2, one unallocated and one allocated entry
            NOTE: Keep the original allocation in it's original index for free list convenient
-           and insert the new entry before it */
+           and insert the new entry before it
+
+           NOTE: I messed up here previously and tried */
         vulkan_memory_node* space_entry = x_entry;
         vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
         // Copy the old data over and then we'll write over it
         vulkan_memory_entry old_entry = space_entry->value;
+
+        i64 aligned_size = target_size + memory_padding( args.alignment, old_entry.position );
 
         // Move the space to the next node
         space_entry->value = {
             .block = old_entry.block,
             .index = space_entry->value.index,
             // Move the position up by the allocated space
-            .position = (old_entry.position + target_size),
+            .position = (old_entry.reserved_position + aligned_size),
             // Position before alignment
-            .reserved_position = (old_entry.position + target_size),
+            .reserved_position = (old_entry.reserved_position + aligned_size),
             // Allocated size is still 0
             .size = 0,
             // NOTE: Internal used bytes after alignment and redzone
             // NOTE: Shrink the reserved space by the total used space
-            .reserved_size = (old_entry.reserved_size - target_size),
-            .alignment = 1,
+            .reserved_size = ( old_entry.reserved_size - aligned_size),
+            .alignment = 1
         };
         // TODO: Don't know how to handle alignment here, this is an offset so what is "aligned"?
         // Is new Vulkan memory objects it just auto aligned to 64 bytes always?
@@ -1147,8 +1166,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             .reserved_position = old_entry.position,
             // The actual size allocated for the object
             .size = args.size,
-            .reserved_size = target_size,
-            .alignment = args.alignment,
+            .reserved_size = aligned_size,
+            .alignment = args.alignment
         };
         result.value = new_entry->value;
         result.error = false;
@@ -1174,13 +1193,15 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     i32 best_index = vulkan_memory_find_best_type_index(
-        requirements.memoryTypeBits, buffer->memory_flags ).copy_default(-1);
+        requirements.memoryTypeBits, memory_flags ).copy_default(-1);
     vulkan_allocate_args allocate_args {
         .size = i64(requirements.size),
         .alignment = i64(requirements.alignment),
         .memory_type_index = best_index,
         .memory_flags = memory_flags,
+        .transfer_buffer = buffer->transfer_buffer
     };
+    ERROR_GUARD( best_index >= 0, "Failed to find suitible memory type" );
 
     monad<vulkan_memory_entry> entry_ok = vulkan_memory_allocate_untyped( arg, allocate_args );
     auto entry = entry_ok.value;
@@ -1193,6 +1214,8 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
     // Lookup original memory entry and fill in the type
     vulkan_memory_entry& original_entry =
     target_block.entries.nodes[ entry.index ].value;
+    // HACK: TODO: copy the local copy of the entry whilst fixing the other stuff
+    original_entry = entry;
     // NOTE: We can just lookup the buffer type from the buffer list
     original_entry.type = e_vulkan_memory_object::buffer;
     buffer->memory = original_entry;
@@ -1203,6 +1226,10 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
         target_block.memory,
         entry.position
     );
+    VULKAN_LOGF( "Bound buffer '{}' to memory block: {} position: {} size: {} reserved size: {}",
+                 buffer->name, entry.block, entry.position, entry.size, entry.reserved_size );
+    VULKAN_LOGF( "    Buffer Host Mappable: {} Memory Flags: {:b}",
+                 target_block.host_mappable, target_block.memory_flags );
     return true;
 }
 
@@ -1272,10 +1299,11 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     if (arg->vertexes_n)
     {   // Space require for both normals and vertexes in the same buffer,
         i64 total_size = (arg->vertexes_n * sizeof(v3) *2);
+        // NOTE: We need TRANSFER_SRC_BIT to allow for transfering memory to the GPU
         vk_mesh->vertex_buffer = vulkan_buffer_create(
-             arg->name, total_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+             arg->name, total_size,
+             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
          );
-        vk_mesh->vertex_buffer.memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
         vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_buffer );
     }
     if (arg->vertex_indexes_n)
@@ -1301,6 +1329,10 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     auto queue_bad = vulkan_transfer_queue_buffer(
         &g_vulkan->transfer, &vk_mesh->vertex_buffer, vertex_buffer_size, 0 );
     ERROR_GUARD( (! queue_bad.error), "Can't really draw anything if this happens" );
+    if (queue_bad.error)
+    {   VULKAN_ERROR( "Failed to queue a mesh transfer to the GPU" );
+        return false;
+    }
     raw_pointer data = queue_bad.value.data;
     v3* vertex_readhead = arg->vertexes.data;
     i64 vertex_offset = (sizeof(v3));
@@ -1392,23 +1424,9 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
 
     vulkan_memory_block& uniform_block = vulkan_memory_get_block(
         &g_vulkan->device_memory, &arg->general_uniform_buffer.memory );
-    void* data = nullptr;
     /** WARNING: Please don't try to unmap memory suballocated from a buffer it
         will immediately invalidate every buffer associated with the device
         memory object. */
-    VkResult map_bad = vkMapMemory(
-        g_vulkan->logical_device,
-        uniform_block.memory,
-        arg->general_uniform_buffer.memory.position,
-        arg->general_uniform_buffer.size,
-        // No known useful flags for this function
-        0,
-        &data
-    );
-    if (map_bad)
-    {   return false;
-    }
-    arg->general_uniform_data = data;
     return true;
 }
 
@@ -1483,8 +1501,12 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
         vulkan_buffer new_buffer = vulkan_buffer_create(
             "buffer_transfer", context->staging_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         );
+        // NOTE: Typical flags for BAR accessible staging buffer, not relevant for iGPUs.
+
         new_buffer.memory_flags = (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        new_buffer.transfer_buffer = true;
         fresult allocate_ok = vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &new_buffer );
 
         if (new_buffer.id.valid() == false || allocate_ok == false)
@@ -1555,13 +1577,89 @@ PROC vulkan_transfer_queue_buffer(
     });
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
-    transfer_buffer->head_size += new_transfer->size + redzone;
+    transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
     result.value.size = new_transfer->size;
     result.error = (transfer_buffer->mapped != true);
     return result;
+}
+
+PROC vulkan_transfer_queue_image(
+    vulkan_transfer_context* context,
+    vulkan_image* image,
+    i64 size,
+    i64 buffer_offset
+) -> monad< dynamic_span<void> >
+{
+    monad< dynamic_span<void> > result;
+    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, size );
+    vulkan_transfer_buffer* transfer_buffer = transfer_search.match;
+    if (transfer_buffer == nullptr)
+    {   result.error = true;
+        return result;
+    }
+
+    vulkan_transfer* new_transfer = &context->transfer_queue.push_tail({
+            .buffer_index = transfer_search.index,
+            .position = transfer_buffer->head_size,
+            .size = size,
+            .buffer_offset = buffer_offset,
+            .destination = e_vulkan_memory_object::image,
+            .destination_buffer = VK_NULL_HANDLE,
+            .destination_image = image->platform_image
+    });
+    // Increase transfer buffer used size by size of the buffer
+    // TODO: Does this need to be an aligned transfer?
+    transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
+
+    // Return the pointer to the tranfer's location in the mapped buffer
+    result.value.data = transfer_buffer->mapped_data + new_transfer->position;
+    result.value.size = new_transfer->size;
+    result.error = (transfer_buffer->mapped != true);
+    return result;
+}
+
+PROC vulkan_image_prepare( render_image* arg ) -> fresult
+{
+    render_image* current_image = arg;
+
+    // Find the associated vulkan image
+    auto image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg_ ) {
+        return (arg_.associated_image == current_image->id) && arg_.id.valid(); } );
+    vulkan_image* vk_draw_image = image_result.match;
+
+    bool no_vulkan_image = (current_image->id.valid() && image_result.match_found == false);
+    if (no_vulkan_image)
+    {
+        // Recreate and search again
+        vulkan_image_init( current_image );
+        image_result = g_vulkan->images.linear_search( [current_image]( vulkan_image& arg ) {
+            return (arg.associated_image == current_image->id) && arg.id.valid(); } );
+        vk_draw_image = image_result.match;
+        /* TODO: This could cause run away resource usage if we have a bad/corrupted vulkan_image list/id
+           need to investigate mitigations for this */
+    }
+
+    if (vk_draw_image)
+    {
+        // Update image if it's  dirty
+        if (current_image->write_timestamp > vk_draw_image->update_timestamp)
+        {
+            auto queue_bad = vulkan_transfer_queue_image(
+                &g_vulkan->transfer, vk_draw_image, current_image->image.size_bytes(), 0 );
+            dynamic_span<void> image_stage = queue_bad.value;
+            if (! queue_bad.error)
+            {
+                // Copy limited to span size
+                memory_copy_raw(
+                    image_stage.data, current_image->image.data, image_stage.size );
+                vk_draw_image->update_timestamp = time_now_ns();
+            }
+        }
+    }
+    return true;
 }
 
 PROC vulkan_init() -> fresult
@@ -2301,6 +2399,13 @@ PROC vulkan_tick() -> void
     }
 
     // New tick setup
+
+    // SECTION: Iterate through the draw images and see if any need updating before drawing
+    for (i32 i=0; i < g_render->draw_queue_image.size(); ++i)
+    {
+        render_image* current_image = g_render->draw_queue_image[i];
+        vulkan_image_prepare( current_image );
+    }
     vulkan_draw();
 }
 
@@ -2564,7 +2669,10 @@ PROC vulkan_draw() -> void
 
        NOTE: I keep on moving this because of issues with resetting it too early
        and the more time I relocate it the more I think my current Vulkan
-       organization is wrong in some way */
+       organization is wrong in some way
+
+       NOTE: It doesn't actually have to be reset here, it just needs to be
+       reset when all the transfers are done. */
     g_vulkan->transfer.transfer_queue.reset();
     // Need to reset used position too
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
@@ -2620,7 +2728,7 @@ PROC vulkan_draw() -> void
         // Test Draw Meshes
         // draw_mesh = &g_vulkan->test_whale;
         // draw_mesh = &g_vulkan->test_teapot;
-        draw_mesh = &g_vulkan->test_ui_triangle;
+        // draw_mesh = &g_vulkan->test_ui_triangle;
         // make test UI meshes resize with window for convenience
         g_vulkan->test_ui_triangle.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
         g_vulkan->test_ui_square.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
@@ -2771,31 +2879,17 @@ PROC vulkan_draw() -> void
             // Update image if it's  dirty
             if (draw_image->write_timestamp > vk_draw_image->update_timestamp)
             {
-                void* image_stage = nullptr;
-                // TODO: Initiate transfer with image
-                // VkResult map_bad = vkMapMemory(
-                //     g_vulkan->logical_device,
-                //     g_vulkan->device_memory.memory,
-                //     vk_draw_image->staging_buffer.memory.position,
-                //     vk_draw_image->staging_buffer.memory.size,
-                //     0,  // No known useful flags for this function
-                //     &image_stage
-                // );
-                if (image_stage)
-                {
-                    memory_copy_raw(
-                        image_stage, draw_image->image.data, draw_image->image.size_bytes() );
-                    // TODO: Do we need this?
-                    // VkMappedMemoryRange range {
-                    //     .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-                    //     .memory = g_vulkan->device_memory.memory,
-                    //     .offset = u64(vk_draw_image->staging_buffer.memory.position),
-                    //     .size = VK_WHOLE_SIZE
-                    // };
-                    // vkFlushMappedMemoryRanges( g_vulkan->logical_device, 1, &range );
-                    // vkUnmapMemory( g_vulkan->logical_device, g_vulkan->device_memory.memory );
-                }
-                vk_draw_image->update_timestamp = time_now_ns();
+                // TODO Delete me
+                // auto queue_bad = vulkan_transfer_queue_image(
+                //     g_vulkan->transfer, &vk_draw_image, draw_image->image.size_bytes(), 0 );
+                // dynamic_span<void> image_stage = queue_bad;
+                // if (! queue_bad.error)
+                // {
+                //     // Copy limited to span size
+                //     memory_copy_raw(
+                //         image_stage.data, draw_image->image.data, image_stage.size );
+                // vk_draw_image->update_timestamp = time_now_ns();
+                // }
 
                 VkBufferImageCopy copy_region {
                     .bufferOffset = 0,
@@ -2847,16 +2941,16 @@ PROC vulkan_draw() -> void
             };
             u32 vk_region_n = 1;
             // TODO: Disable until it's finished
-            // vkCmdBlitImage(
-            //     command_buffer,
-            //     vk_draw_image->platform_image,
-            //     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            //     g_vulkan->swapchain_images[ inflight_frame_i ],
-            //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            //     vk_region_n,
-            //     &vk_region,
-            //     VK_FILTER_LINEAR
-            // );
+            vkCmdBlitImage(
+                command_buffer,
+                vk_draw_image->platform_image,
+                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                g_vulkan->swapchain_images[ inflight_frame_i ],
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                vk_region_n,
+                &vk_region,
+                VK_FILTER_LINEAR
+            );
 
         }
     }

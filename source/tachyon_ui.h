@@ -1,5 +1,5 @@
 
-#pragma
+#pragma once
 
 /* TODO: Things we need to to impliment
    viewport
