@@ -1299,10 +1299,10 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     if (arg->vertexes_n)
     {   // Space require for both normals and vertexes in the same buffer,
         i64 total_size = (arg->vertexes_n * sizeof(v3) *2);
-        // NOTE: We need TRANSFER_SRC_BIT to allow for transfering memory to the GPU
+        // NOTE: We need TRANSFER_DST_BIT to allow for transfering memory to the GPU
         vk_mesh->vertex_buffer = vulkan_buffer_create(
              arg->name, total_size,
-             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
          );
         vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &vk_mesh->vertex_buffer );
     }
@@ -1363,7 +1363,9 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
+        /* NOTE: We use our images as both transfer source and destination */
         .usage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                   VK_IMAGE_USAGE_SAMPLED_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -1415,7 +1417,7 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
         sizeof( frame_general_uniform),
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
     fresult allocate_ok = vulkan_memory_allocate_buffer(
         &g_vulkan->device_memory, &arg->general_uniform_buffer );
@@ -2665,9 +2667,15 @@ PROC vulkan_draw() -> void
                     .bufferOffset = 0,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
-                    .imageSubresource = 0,
+                    .imageSubresource = {
+                        // TODO: I don't unerstand what this flag is
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 0
+                    },
                     .imageOffset = { 0, 0, 0 },
-                    .imageExtent { u32(image_size.x), u32(image_size.y) }
+                    .imageExtent { u32(image_size.x), u32(image_size.y), u32(1) }
                 };
 
                 if (buffer_search.match_found)
