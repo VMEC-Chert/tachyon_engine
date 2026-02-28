@@ -1387,6 +1387,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
     // Create a host mappable staging/transfer buffer (try to use faster(*) BAR memory
     // * not sur if this is actualy faster or not
+    image->size = { f32(arg->image.size.x), f32(arg->image.size.y) };
     image->staging_buffer = vulkan_buffer_create(
         "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
     image->staging_buffer.memory_flags =
@@ -1608,7 +1609,8 @@ PROC vulkan_transfer_queue_image(
             .buffer_offset = buffer_offset,
             .destination = e_vulkan_memory_object::image,
             .destination_buffer = VK_NULL_HANDLE,
-            .destination_image = image->platform_image
+            .destination_image = image->platform_image,
+            .destination_image_size = { f32(image->size.x), f32(image->size.y) }
     });
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
@@ -2602,6 +2604,11 @@ PROC vulkan_draw() -> void
     {
         x_transfer = g_vulkan->transfer.transfer_queue.address(i);
         x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
+        search_result<vulkan_buffer> buffer_search = g_vulkan->buffers.linear_search(
+            [id = x_transfer_buffer->buffer](vulkan_buffer& arg) {
+                return arg.id == id; });
+        VkBuffer staging_buffer = buffer_search.match->buffer;
+
         switch (x_transfer->destination)
         {
             case e_vulkan_memory_object::buffer:
@@ -2611,15 +2618,12 @@ PROC vulkan_draw() -> void
                     .dstOffset = u64(x_transfer->buffer_offset),
                     .size = u64(x_transfer->size)
                 };
-                search_result<vulkan_buffer> buffer_search = g_vulkan->buffers.linear_search(
-                    [id = x_transfer_buffer->buffer](vulkan_buffer& arg) {
-                        return arg.id == id; });
 
                 if (buffer_search.match_found)
                 {
                     vkCmdCopyBuffer(
                         command_buffer,
-                        buffer_search.match->buffer,
+                        staging_buffer,
                         x_transfer->destination_buffer,
                         1,
                         &copy_region
@@ -2655,7 +2659,30 @@ PROC vulkan_draw() -> void
                 break;
             }
             case e_vulkan_memory_object::image:
+            {
+                v2_f32 image_size = x_transfer->destination_image_size;
+                VkBufferImageCopy copy_region {
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = 0,
+                    .imageOffset = { 0, 0, 0 },
+                    .imageExtent { u32(image_size.x), u32(image_size.y) }
+                };
+
+                if (buffer_search.match_found)
+                {
+                vkCmdCopyBufferToImage(
+                    command_buffer,
+                    staging_buffer,
+                    x_transfer->destination_image,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    1,
+                    &copy_region
+                );
+                }
                 break;
+            }
             default: break;
         }
     }
@@ -2866,49 +2893,9 @@ PROC vulkan_draw() -> void
             return (arg.associated_image == draw_image->id) && arg.id.valid(); } );
         vulkan_image* vk_draw_image = image_result.match;
         bool no_vulkan_image = (draw_image->id.valid() && image_result.match_found == false);
-        if (no_vulkan_image)
-        {
-            // Recreate and search again
-            vulkan_image_init( draw_image );
-            image_result = g_vulkan->images.linear_search( [draw_image]( vulkan_image& arg ) {
-                return (arg.associated_image == draw_image->id) && arg.id.valid(); } );
-            vk_draw_image = image_result.match;
-        }
+
         if (vk_draw_image)
         {
-            // Update image if it's  dirty
-            if (draw_image->write_timestamp > vk_draw_image->update_timestamp)
-            {
-                // TODO Delete me
-                // auto queue_bad = vulkan_transfer_queue_image(
-                //     g_vulkan->transfer, &vk_draw_image, draw_image->image.size_bytes(), 0 );
-                // dynamic_span<void> image_stage = queue_bad;
-                // if (! queue_bad.error)
-                // {
-                //     // Copy limited to span size
-                //     memory_copy_raw(
-                //         image_stage.data, draw_image->image.data, image_stage.size );
-                // vk_draw_image->update_timestamp = time_now_ns();
-                // }
-
-                VkBufferImageCopy copy_region {
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = 0,
-                    .imageOffset = { 0, 0, 0 },
-                    .imageExtent { u32(draw_image->image.size.x), u32(draw_image->image.size.y) }
-                };
-                // TODO: Setup image transfer
-                // vkCmdCopyBufferToImage(
-                //     command_buffer,
-                //     vk_draw_image->staging_buffer.buffer,
-                //     vk_draw_image->platform_image,
-                //     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                //     1,
-                //     &copy_region
-                // );
-            }
 
             // TODO: Should already be in sreenspace coordinates by this time
             box_2d clip = draw_image->clip_region;
@@ -2939,8 +2926,8 @@ PROC vulkan_draw() -> void
                     VkOffset3D { i32(region.size.x), i32(region.size.y), 1 }
                 },
             };
+
             u32 vk_region_n = 1;
-            // TODO: Disable until it's finished
             vkCmdBlitImage(
                 command_buffer,
                 vk_draw_image->platform_image,

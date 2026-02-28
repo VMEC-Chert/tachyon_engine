@@ -45,6 +45,7 @@ namespace tyon
         g_ui->test_image.image.size = { 400, 400 };
         g_ui->test_image.id = uuid_generate();
         memset( g_ui->test_image.image.data, 0xFF, g_ui->test_image.image.size_bytes() );
+        g_ui->test_image.write_timestamp;
 
         TYON_LOG( "UI Initialized" );
 
