@@ -2672,7 +2672,7 @@ PROC vulkan_draw() -> void
                         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                         .mipLevel = 0,
                         .baseArrayLayer = 0,
-                        .layerCount = 0
+                        .layerCount = 1
                     },
                     .imageOffset = { 0, 0, 0 },
                     .imageExtent { u32(image_size.x), u32(image_size.y), u32(1) }
