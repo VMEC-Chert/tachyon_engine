@@ -76,7 +76,8 @@ PROC render_init() -> void
     sdl->init();
 
     tyon::window default_window = {
-        .name = "VMEC | Spectral Renderer",
+        .name = "vmec_editor_base",
+        .title = "VMEC | Spectral Renderer",
         .size = tyon::v2 { 1920.0f, 1000.0f },
         .position = tyon::v2 { 0.0f, 0.0f },
         .maximized = true
