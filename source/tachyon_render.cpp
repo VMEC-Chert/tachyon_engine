@@ -135,6 +135,8 @@ PROC render_tick() -> void
     g_thread->scratch->blank_all();
     g_render->draw_queue_mesh.reset();
     g_render->draw_queue_image.reset();
+    // Add the permanant draws back onto the draw list
+    g_render->draw_queue_image = g_render->permanent_draw_queue_image;
 
     sdl->tick();
     ui_tick();

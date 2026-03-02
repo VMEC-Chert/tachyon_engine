@@ -47,7 +47,7 @@ namespace tyon
         // TODO: Doesn't preserve aspect ratio
         g_ui->test_image.draw_region.size = v2_f32{ 200, 200 };
         memset( g_ui->test_image.image.data, 0xFF, g_ui->test_image.image.size_bytes() );
-        g_ui->test_image.write_timestamp;
+        g_ui->test_image.write_timestamp = time_now_ns();
 
         TYON_LOG( "UI Initialized" );
 

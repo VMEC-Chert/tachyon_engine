@@ -187,6 +187,9 @@ struct vulkan_transfer
     /** What object the transfer will be copied into */
     e_vulkan_memory_object destination = e_vulkan_memory_object::none;
     VkBuffer destination_buffer = VK_NULL_HANDLE;
+    uid destination_image_;
+
+    // TODO: Delete me, no longer neded, replacing with the full handle
     VkImage destination_image = VK_NULL_HANDLE;
     v2_f32 destination_image_size = 0;
 };
@@ -265,6 +268,8 @@ struct vulkan_image
     time_monotonic_ns update_timestamp = 0;
     vulkan_memory_entry memory;
     vulkan_buffer staging_buffer;
+    /** Current tracked layout */
+    VkImageLayout layout;
 };
 
 

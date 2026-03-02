@@ -1366,7 +1366,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         /* NOTE: We use our images as both transfer source and destination */
         .usage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                   VK_IMAGE_USAGE_SAMPLED_BIT),
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
@@ -2514,6 +2514,7 @@ PROC vulkan_draw() -> void
     else if (frame_timeout == VK_SUCCESS)
     {
         // VULKAN_LOGF( "Frame: {} | Completed Frame.", current_frame_i );
+        if (g_render->display_ready == false) { g_render->display_ready = true; }
         FrameMarkEnd( "Vulkan Inflight Frame" );
     }
     FrameMarkStart( "Vulkan Inflight Frame" );
@@ -2662,6 +2663,12 @@ PROC vulkan_draw() -> void
             }
             case e_vulkan_memory_object::image:
             {
+                auto image_result = g_vulkan->images.linear_search(
+                    [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
+                    return (arg_.associated_image == image_id) && arg_.id.valid(); } );
+                vulkan_image* vk_image = image_result.match;
+                if (vk_image == nullptr) { break; }
+                
                 v2_f32 image_size = x_transfer->destination_image_size;
                 VkBufferImageCopy copy_region {
                     .bufferOffset = 0,
@@ -2680,14 +2687,39 @@ PROC vulkan_draw() -> void
 
                 if (buffer_search.match_found)
                 {
-                vkCmdCopyBufferToImage(
-                    command_buffer,
-                    staging_buffer,
-                    x_transfer->destination_image,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                    1,
-                    &copy_region
-                );
+                    vkCmdCopyBufferToImage(
+                        command_buffer,
+                        staging_buffer,
+                        x_transfer->destination_image,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        1,
+                        &copy_region
+                    );
+                
+                    VkImageMemoryBarrier copy_barrier = {
+                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        // no prior access needed for present → transfer
+                        .srcAccessMask       = 0,
+                        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+                        // or UNDEFINED on first acquire
+                        .oldLayout           = vk_image->layout,
+                        // Make it available to use now
+                        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        .image               = x_transfer->destination_image,
+                        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+                    };
+                    vk_image->layout = copy_barrier.newLayout;
+
+                    vkCmdPipelineBarrier(
+                        command_buffer,
+                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0,
+                        0, nullptr,
+                        0, nullptr,
+                        1, &copy_barrier
+                    );
                 }
                 break;
             }
@@ -2867,14 +2899,16 @@ PROC vulkan_draw() -> void
     // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
     vkCmdEndRenderPass( command_buffer );
 
-    // AI Poison
     // Have to transition the image layout with sychronisation to perform the image blit
-    VkImageMemoryBarrier blit_barrier = {
+    // Transition the framebuffer to destination
+    VkImageMemoryBarrier blit_framebuffer_barrier =
+    {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         // no prior access needed for present → transfer
         .srcAccessMask       = 0,
         .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
         // or UNDEFINED on first acquire
+        // TODO: update old layout to vulkan_image->layout
         .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .image               = g_vulkan->swapchain_images[ inflight_frame_i ],
@@ -2889,7 +2923,7 @@ PROC vulkan_draw() -> void
         0,
         0, nullptr,
         0, nullptr,
-        1, &blit_barrier
+        1, &blit_framebuffer_barrier
     );
 
     /* NOTE: Vulkan spec states that blitting cannot happen inside of an active render pass */
@@ -2925,8 +2959,19 @@ PROC vulkan_draw() -> void
 
             v2_f32 clip_down_left = clip.position;
             v2_f32 clip_up_right = clip.position + clip.size;
-            v2_f32 draw_down_right = region.position;
-            v2_f32 draw_up_right = region.position + clip.size;
+            v2_f32 draw_down_left = region.position + region.size;
+            v2_f32 draw_up_right = region.position;
+
+            // Clamp draw region to framebuffer to prevent memory corruption
+            draw_down_left.x = minimum( draw_down_left.x, present.width );
+            draw_down_left.y = minimum( draw_down_left.y, present.width );
+            draw_up_right.x = minimum( draw_up_right.x, present.height );
+            draw_up_right.y = minimum( draw_up_right.y, present.height );
+            clip_down_left.x = minimum( clip_down_left.x, draw_image->image.size.x );
+            clip_down_left.y = minimum( clip_down_left.y, draw_image->image.size.y );
+            clip_up_right.x = minimum( clip_up_right.x, draw_image->image.size.x );
+            clip_up_right.y = minimum( clip_up_right.y, draw_image->image.size.y );
+
             VkImageBlit vk_region {
                 .srcSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .srcOffsets= {
@@ -2936,16 +2981,42 @@ PROC vulkan_draw() -> void
                 },
                 .dstSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .dstOffsets = {
-                    VkOffset3D {i32(draw_down_right.x), i32(draw_down_right.y), 0},
+                    VkOffset3D {i32(draw_down_left.x), i32(draw_down_left.y), 0},
                     VkOffset3D { i32(draw_up_right.x), i32(draw_up_right.y), 1 }
                 },
             };
+
+            // Transition the blit image to destination as well
+            VkImageMemoryBarrier image_barrier =
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                // no prior access needed for present → transfer
+                .srcAccessMask       = 0,
+                .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+                // or UNDEFINED on first acquire
+                .oldLayout           = vk_draw_image->layout,
+                // We're writing so use transfer destination layout
+                .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .image               = vk_draw_image->platform_image,
+                .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            };
+
+            vkCmdPipelineBarrier(
+                command_buffer,
+                // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &image_barrier
+            );
 
             u32 vk_region_n = 1;
             vkCmdBlitImage(
                 command_buffer,
                 vk_draw_image->platform_image,
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                vk_draw_image->layout,
                 g_vulkan->swapchain_images[ inflight_frame_i ],
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 vk_region_n,

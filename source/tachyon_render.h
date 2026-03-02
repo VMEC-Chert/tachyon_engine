@@ -130,6 +130,11 @@ struct render_context
 
     array< mesh* > draw_queue_mesh;
     array< render_image* > draw_queue_image;
+    /** Doesn't get cleared every frame, retained convenience, not to be used often.
+        Mainly for debugging */
+    array< render_image* > permanent_draw_queue_image;
+
+    bool display_ready = false;
 };
 
 extern render_context* g_render;
