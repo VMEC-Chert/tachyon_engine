@@ -2642,8 +2642,8 @@ PROC vulkan_draw() -> void
                         .srcQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
                         .dstQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
                         .buffer = x_transfer->destination_buffer,
-                        copy_region.dstOffset,
-                        copy_region.size
+                        .offset = copy_region.dstOffset,
+                        .size = copy_region.size
                     };
                     vkCmdPipelineBarrier(
                         command_buffer,
