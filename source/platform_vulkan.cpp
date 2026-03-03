@@ -908,6 +908,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     if (memory_bad)
     {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
                        string_VkResult( memory_bad ) );
+        context->blocks.pop_tail();
         return false;
     }
 
@@ -1585,10 +1586,10 @@ PROC vulkan_transfer_queue_buffer(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    VULKAN_LOG( "Queued Buffer GPU trasnfer" )
-    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-                 new_transfer->buffer_index, new_transfer->position,
-                 new_transfer->size, new_transfer->buffer_offset );
+    // VULKAN_LOG( "Queued Buffer GPU trasnfer" )
+    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+    //              new_transfer->buffer_index, new_transfer->position,
+    //              new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -1624,10 +1625,10 @@ PROC vulkan_transfer_queue_image(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    VULKAN_LOG( "Queued Image GPU transfer" )
-    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-                 new_transfer->buffer_index, new_transfer->position,
-                 new_transfer->size, new_transfer->buffer_offset );
+    // VULKAN_LOG( "Queued Image GPU transfer" )
+    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+    //              new_transfer->buffer_index, new_transfer->position,
+    //              new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -1662,7 +1663,7 @@ PROC vulkan_image_prepare( render_image* arg ) -> fresult
         // Update image if it's  dirty
         bool dirty_buffer = (current_image->write_timestamp > vk_draw_image->update_timestamp);
         bool update_image = dirty_buffer;
-        update_image = true; // Force update every time
+        // update_image = true; // DEBUG: Force update every time
         if (update_image)
         {
             auto queue_bad = vulkan_transfer_queue_image(
@@ -2418,12 +2419,6 @@ PROC vulkan_tick() -> void
 
     // New tick setup
 
-    // SECTION: Iterate through the draw images and see if any need updating before drawing
-    for (i32 i=0; i < g_render->draw_queue_image.size(); ++i)
-    {
-        render_image* current_image = g_render->draw_queue_image[i];
-        vulkan_image_prepare( current_image );
-    }
     vulkan_draw();
 }
 
@@ -2556,6 +2551,14 @@ PROC vulkan_draw() -> void
     // TODO: Change this if we go back to a 3D pipeline, this was meant for UI rendering
     current_frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
                                      g_render->ui_camera.create_orthographic_projection());
+
+    // SECTION: Iterate through the draw images and see if any need updating before drawing
+    // NOTE: We have to do this after aquiring a new frame or we keep on issuing endless commands on VK_TIMEOUT
+    for (i32 i=0; i < g_render->draw_queue_image.size(); ++i)
+    {
+        render_image* current_image = g_render->draw_queue_image[i];
+        vulkan_image_prepare( current_image );
+    }
 
     // Setup Uniform
     frame_general_uniform* current_uniform = &current_frame->uniform;
