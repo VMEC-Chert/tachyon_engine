@@ -825,6 +825,7 @@ PROC vulkan_memory_find_best_type_index(
     vkGetPhysicalDeviceMemoryProperties( g_vulkan->device, &memory_props );
 
     i32 best_index = -1;
+    i64 best_heap_size = 0;
     /** How many flags are missing */
     i32 best_missing_flag_n = 32;
     std::bitset<32> best_flag = ~u32(0);
@@ -864,10 +865,12 @@ PROC vulkan_memory_find_best_type_index(
         }
 
         bool less_missing_flags = (x_missing_flag_n < best_missing_flag_n);
+        bool bigger_heap = (x_missing_flag_n == best_missing_flag_n) && (x_heap.size > best_heap_size);
         if (less_missing_flags)
         {   best_index = i;
             best_missing_flag_n = x_missing_flag_n;
             best_flag = memory_type;
+            best_heap_size = x_heap.size;
         }
     }
     if (best_index == -1)
@@ -1376,6 +1379,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
     image->associated_image = arg->id;
+    image->layout = image_args.initialLayout;
     VkResult image_bad = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
     if (image_bad)
@@ -1576,11 +1580,15 @@ PROC vulkan_transfer_queue_buffer(
             .buffer_offset = buffer_offset,
             .destination = e_vulkan_memory_object::buffer,
             .destination_buffer = buffer->buffer,
-            .destination_image = VK_NULL_HANDLE
+            .destination_image_ = 0
     });
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
+    VULKAN_LOG( "Queued Buffer GPU trasnfer" )
+    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+                 new_transfer->buffer_index, new_transfer->position,
+                 new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -1611,12 +1619,15 @@ PROC vulkan_transfer_queue_image(
             .buffer_offset = buffer_offset,
             .destination = e_vulkan_memory_object::image,
             .destination_buffer = VK_NULL_HANDLE,
-            .destination_image = image->platform_image,
-            .destination_image_size = { f32(image->size.x), f32(image->size.y) }
+            .destination_image_ = image->id
     });
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
+    VULKAN_LOG( "Queued Image GPU transfer" )
+    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+                 new_transfer->buffer_index, new_transfer->position,
+                 new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -1649,7 +1660,10 @@ PROC vulkan_image_prepare( render_image* arg ) -> fresult
     if (vk_draw_image)
     {
         // Update image if it's  dirty
-        if (current_image->write_timestamp > vk_draw_image->update_timestamp)
+        bool dirty_buffer = (current_image->write_timestamp > vk_draw_image->update_timestamp);
+        bool update_image = dirty_buffer;
+        update_image = true; // Force update every time
+        if (update_image)
         {
             auto queue_bad = vulkan_transfer_queue_image(
                 &g_vulkan->transfer, vk_draw_image, current_image->image.size_bytes(), 0 );
@@ -1658,7 +1672,7 @@ PROC vulkan_image_prepare( render_image* arg ) -> fresult
             {
                 // Copy limited to span size
                 memory_copy_raw(
-                    image_stage.data, current_image->image.data, image_stage.size );
+                    image_stage.data, current_image->image.data, current_image->image.size_bytes() );
                 vk_draw_image->update_timestamp = time_now_ns();
             }
         }
@@ -2665,13 +2679,13 @@ PROC vulkan_draw() -> void
             {
                 auto image_result = g_vulkan->images.linear_search(
                     [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
-                    return (arg_.associated_image == image_id) && arg_.id.valid(); } );
+                    return (arg_.id == image_id) && arg_.id.valid(); } );
                 vulkan_image* vk_image = image_result.match;
                 if (vk_image == nullptr) { break; }
                 
-                v2_f32 image_size = x_transfer->destination_image_size;
+                v2_f32 image_size = vk_image->size;
                 VkBufferImageCopy copy_region {
-                    .bufferOffset = 0,
+                    .bufferOffset = x_transfer->position,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource = {
@@ -2690,7 +2704,7 @@ PROC vulkan_draw() -> void
                     vkCmdCopyBufferToImage(
                         command_buffer,
                         staging_buffer,
-                        x_transfer->destination_image,
+                        vk_image->platform_image,
                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         1,
                         &copy_region
@@ -2705,7 +2719,7 @@ PROC vulkan_draw() -> void
                         .oldLayout           = vk_image->layout,
                         // Make it available to use now
                         .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        .image               = x_transfer->destination_image,
+                        .image               = vk_image->platform_image,
                         .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
                     };
                     vk_image->layout = copy_barrier.newLayout;
@@ -2740,6 +2754,7 @@ PROC vulkan_draw() -> void
 
        NOTE: It doesn't actually have to be reset here, it just needs to be
        reset when all the transfers are done. */
+    // Reset everyting to do with per-frame transfers
     g_vulkan->transfer.transfer_queue.reset();
     // Need to reset used position too
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
@@ -2986,7 +3001,7 @@ PROC vulkan_draw() -> void
                 },
             };
 
-            // Transition the blit image to destination as well
+            // Transition the blit image to soruce since we're copying from it
             VkImageMemoryBarrier image_barrier =
             {
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -2996,7 +3011,7 @@ PROC vulkan_draw() -> void
                 // or UNDEFINED on first acquire
                 .oldLayout           = vk_draw_image->layout,
                 // We're writing so use transfer destination layout
-                .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 .image               = vk_draw_image->platform_image,
                 .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
             };

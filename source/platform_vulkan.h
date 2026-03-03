@@ -169,8 +169,6 @@ struct vulkan_memory
 
     array< vulkan_object_memory_info > object_infos;
     array< vulkan_memory_block > blocks;
-
-    i64 head_size {};
 };
 
 struct vulkan_transfer
@@ -189,9 +187,6 @@ struct vulkan_transfer
     VkBuffer destination_buffer = VK_NULL_HANDLE;
     uid destination_image_;
 
-    // TODO: Delete me, no longer neded, replacing with the full handle
-    VkImage destination_image = VK_NULL_HANDLE;
-    v2_f32 destination_image_size = 0;
 };
 
 struct vulkan_transfer_buffer
