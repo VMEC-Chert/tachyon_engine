@@ -8,7 +8,7 @@ render_context* g_render = nullptr;
 
 platform_subsystem* sdl = nullptr;
 
-PROC render_thread() -> void
+PROC render_thread( render_args* args ) -> void
 {
     thread_options options = {
         .short_name = "render",
@@ -21,7 +21,7 @@ PROC render_thread() -> void
 
     thread_self_init( options );
 
-    render_init();
+    render_init( args );
     while (global->kill_program == false && thread_self_interupt() == false)
     {
         time_monotonic next_frame = time_now() + 16666us;
@@ -31,13 +31,15 @@ PROC render_thread() -> void
     render_destroy();
 }
 
-PROC render_init() -> void
+PROC render_init( render_args* args ) -> void
 {
     PROFILE_SCOPE_FUNCTION();
 
     g_render = memory_allocate<render_context>( 1 );
     sdl = memory_allocate<platform_subsystem>(1);
     *sdl = tyon::sdl_create_platform_subsystem();
+
+    g_render->args = *args;
 
     /* If nsight or renderdoc is attached it will break with wayland, so we
        should try to disable pre-emptively that if possible. */
@@ -75,14 +77,7 @@ PROC render_init() -> void
     // SDL needs to setup after the render context but before vulkan init
     sdl->init();
 
-    tyon::window default_window = {
-        .name = "vmec_editor_base",
-        .title = "VMEC | Spectral Renderer",
-        .size = tyon::v2 { 1920.0f, 1000.0f },
-        .position = tyon::v2 { 0.0f, 0.0f },
-        .maximized = true
-    };
-    sdl->window_open( &default_window );
+    sdl->window_open( &g_render->args.default_window );
 
     /* This "camera" is for UI usage... So the sensor size should be the window
      * size, and all the primitives exactly on the near clip or slightly
@@ -96,7 +91,7 @@ PROC render_init() -> void
         },
         // TODO: Good size for UI, needs to be updated on the fly though...
         // This has been done for Vulkan, but no other backend
-        .sensor_size = default_window.size,
+        .sensor_size = g_render->args.default_window.size,
         .near_clip = 1.0f,
         // Fairly generous far clip for random 3D UI effects if we want that
         .far_clip = 2000.0f

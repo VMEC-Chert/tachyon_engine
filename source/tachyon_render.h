@@ -110,9 +110,15 @@ struct render_image
     time_monotonic_ns write_timestamp = time_now_ns();
 };
 
+struct render_args
+{
+    window default_window;
+};
+
 // NOTE: Context structs should always be as near the bottom of the decleration order as possible.
 struct render_context
 {
+    render_args args;
     // Primary window size
     v2 window_size = { 1920.0f, 1080.0f };
     e_window_platform window_platform = e_window_platform::none;
@@ -140,9 +146,9 @@ struct render_context
 extern render_context* g_render;
 
 /** Threaded entry point */
-PROC render_thread() -> void;
+PROC render_thread( render_args* args ) -> void;
 
-PROC render_init() -> void;
+PROC render_init( render_args* args ) -> void;
 
 PROC render_destroy() -> void;
 
