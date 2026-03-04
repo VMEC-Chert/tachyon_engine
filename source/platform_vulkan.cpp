@@ -2986,9 +2986,9 @@ PROC vulkan_draw() -> void
 
             // Clamp draw region to framebuffer to prevent memory corruption
             draw_down_left.x = minimum( draw_down_left.x, present.width );
-            draw_down_left.y = minimum( draw_down_left.y, present.width );
+            draw_down_left.y = minimum( draw_down_left.y, present.height );
             draw_up_right.x = minimum( draw_up_right.x, present.height );
-            draw_up_right.y = minimum( draw_up_right.y, present.height );
+            draw_up_right.y = minimum( draw_up_right.y, present.width );
             clip_down_left.x = minimum( clip_down_left.x, draw_image->image.size.x );
             clip_down_left.y = minimum( clip_down_left.y, draw_image->image.size.y );
             clip_up_right.x = minimum( clip_up_right.x, draw_image->image.size.x );
