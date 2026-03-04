@@ -8,7 +8,7 @@ namespace tyon
         uid id;
         fstring name;
         fstring title;
-        fstring icon_file;
+        image<rgba> icon;
         v2 size;
         v2 position;
         /** It's pretty rare the user wants a partial window, they can fix it
