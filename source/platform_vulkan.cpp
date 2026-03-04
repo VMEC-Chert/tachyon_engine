@@ -2708,15 +2708,7 @@ PROC vulkan_draw() -> void
 
                 if (buffer_search.match_found)
                 {
-                    vkCmdCopyBufferToImage(
-                        command_buffer,
-                        staging_buffer,
-                        vk_image->platform_image,
-                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        1,
-                        &copy_region
-                    );
-                
+
                     VkImageMemoryBarrier copy_barrier = {
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         // no prior access needed for present → transfer
@@ -2725,11 +2717,10 @@ PROC vulkan_draw() -> void
                         // or UNDEFINED on first acquire
                         .oldLayout           = vk_image->layout,
                         // Make it available to use now
-                        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        .newLayout           = vk_image->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         .image               = vk_image->platform_image,
                         .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
                     };
-                    vk_image->layout = copy_barrier.newLayout;
 
                     vkCmdPipelineBarrier(
                         command_buffer,
@@ -2741,6 +2732,15 @@ PROC vulkan_draw() -> void
                         0, nullptr,
                         1, &copy_barrier
                     );
+                    vkCmdCopyBufferToImage(
+                        command_buffer,
+                        staging_buffer,
+                        vk_image->platform_image,
+                        vk_image->layout,
+                        1,
+                        &copy_region
+                    );
+
                 }
                 break;
             }
