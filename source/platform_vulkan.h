@@ -409,6 +409,8 @@ struct vulkan_context
     resource_arena resources;
 
     bool initialized = false;
+    bool restart_vulkan = false;
+    bool device_lost = false;
     i64 frames_started = 0;
     i64 frames_completed = 0;
 };

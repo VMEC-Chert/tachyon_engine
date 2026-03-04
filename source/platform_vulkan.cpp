@@ -2409,10 +2409,12 @@ PROC vulkan_destroy() -> void
 PROC vulkan_tick() -> void
 {
     PROFILE_SCOPE_FUNCTION();
+    if (g_vulkan == nullptr) { return; }
 
-    bool restart_vulkan = false;
+    bool restart_vulkan = g_vulkan->restart_vulkan || g_vulkan->device_lost;
     if (restart_vulkan)
     {
+        VULKAN_LOG( "Restarting Vulkan context" );
         vulkan_destroy();
         vulkan_init();
     }
@@ -2425,6 +2427,7 @@ PROC vulkan_tick() -> void
 PROC vulkan_draw() -> void
 {
     PROFILE_SCOPE_FUNCTION();
+    if (g_vulkan == nullptr) { return; }
     // -- Function Setup
     auto self = g_vulkan;
     auto& swapchain = self->swapchain;
@@ -2518,6 +2521,7 @@ PROC vulkan_draw() -> void
     else if (frame_timeout == VK_ERROR_DEVICE_LOST)
     {   VULKAN_ERROR( "Something really horrible happened, "
                       "device was lost waiting on frame end, 'VK_DEVICE_LOST'" );
+        g_vulkan->device_lost = true;
         return;
     }
     else if (frame_timeout == VK_SUCCESS)
