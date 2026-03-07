@@ -2983,16 +2983,18 @@ PROC vulkan_draw() -> void
             v2_f32 clip_up_right = clip.position + clip.size;
             v2_f32 draw_down_left = region.position + region.size;
             v2_f32 draw_up_right = region.position;
+            draw_down_left.y = present.height - draw_down_left.y;
+            draw_up_right.y =  present.height - draw_up_right.y;
 
             // Clamp draw region to framebuffer to prevent memory corruption
-            draw_down_left.x = minimum( draw_down_left.x, present.width );
-            draw_down_left.y = minimum( draw_down_left.y, present.height );
-            draw_up_right.x = minimum( draw_up_right.x, present.height );
-            draw_up_right.y = minimum( draw_up_right.y, present.width );
-            clip_down_left.x = minimum( clip_down_left.x, draw_image->image.size.x );
-            clip_down_left.y = minimum( clip_down_left.y, draw_image->image.size.y );
-            clip_up_right.x = minimum( clip_up_right.x, draw_image->image.size.x );
-            clip_up_right.y = minimum( clip_up_right.y, draw_image->image.size.y );
+            draw_down_left.x = clamp_range( 0,  present.width, draw_down_left.x );
+            draw_down_left.y = clamp_range( 0,  present.height, draw_down_left.y );
+            draw_up_right.x = clamp_range( 0,  present.height, draw_up_right.x );
+            draw_up_right.y = clamp_range( 0,  present.width, draw_up_right.y );
+            clip_down_left.x = clamp_range( 0,  draw_image->image.size.x, clip_down_left.x );
+            clip_down_left.y = clamp_range( 0,  draw_image->image.size.y, clip_down_left.y );
+            clip_up_right.x = clamp_range( 0,  draw_image->image.size.x, clip_up_right.x );
+            clip_up_right.y = clamp_range( 0,  draw_image->image.size.y, clip_up_right.y );
 
             VkImageBlit vk_region {
                 .srcSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
