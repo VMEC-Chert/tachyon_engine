@@ -109,19 +109,21 @@ namespace tyon
         g_sdl->main_window = arg;
         (void)&g_sdl->windows.push_tail( platform_window );
 
-        TYON_LOG( "Showing SDL Window" );
-        SDL_ShowWindow( platform_window.handle );
-        if (arg->maximized)
-        {   SDL_MaximizeWindow( platform_window.handle );
-            TYON_LOG( "Maximizing SDL window" );
-        }
-
+        // NOTE: Do this before showing the window so you don't see the ugly default platform icon
+        // NOTE: It still shows the default icon, I don't know how to fix without an even uglier hack
         // stbi uses RGBA order reguardless of endianness so use the non-endian SDL_PIXELFORMAT_RGBA32
         // TODO: Fix this to use native format later, not important because only we use the engine
         SDL_Surface* icon = SDL_CreateSurfaceFrom(
             arg->icon.size.x, arg->icon.size.y, SDL_PIXELFORMAT_RGBA32,
             arg->icon.data, arg->icon.stride_bytes() );
         SDL_SetWindowIcon( platform_window.handle, icon );
+
+        TYON_LOG( "Showing SDL Window" );
+        SDL_ShowWindow( platform_window.handle );
+        if (arg->maximized)
+        {   SDL_MaximizeWindow( platform_window.handle );
+            TYON_LOG( "Maximizing SDL window" );
+        }
 
         i32 window_width = 0;
         i32 window_height = 0;
