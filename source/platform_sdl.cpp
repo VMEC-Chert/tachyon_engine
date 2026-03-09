@@ -301,18 +301,33 @@ namespace tyon
 
     PROC sdl_render_text( ui_drawable* arg ) -> fresult
     {
+        PROFILE_SCOPE_FUNCTION();
         const text_drawable& props = arg->text;
         SDL_Surface* text_surface {};
-        if (props.wrapped)
+        SDL_Color sdl_white = { 255, 255, 255, 255 };
+
+        if (props.wrapped == false)
         {
-            SDL_Color sdl_white = { 255, 255, 255, 255 };
             text_surface = sdl::TTF_RenderText_Blended(
                 g_sdl->default_font, props.text.c_str(), props.text.size(), sdl_white );
         }
+        else
+        {
+            i32 wrap_width = 80;
+            TTF_RenderText_Blended_Wrapped(
+                g_sdl->default_font, props.text.c_str(), props.text.size(), sdl_white, wrap_width );
+        }
+
         if (text_surface)
         {
-            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_ARGB32,
+            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_ARGB8888,
                          "Our internal API must have changed." );
+            image<argb> surface_view;
+            surface_view.data = raw_pointer(text_surface->pixels);
+            surface_view.size = { f32(text_surface->w), f32(text_surface->h) };
+            surface_view.stride_bytes_ = text_surface->pitch;
+            image<argb> temp =image_packed_from_simd( surface_view );
+            arg->image_.image = image_color_reorder_inplace<rgba>( temp );
             SDL_DestroySurface( text_surface );
         }
         return false;

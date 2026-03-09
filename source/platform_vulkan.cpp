@@ -2983,9 +2983,9 @@ PROC vulkan_draw() -> void
                 clip.size = { f32(draw_image->image.size.x), f32(draw_image->image.size.y) };
             }
             if (unset_region)
-            {   // Default to swapchain framebuffer size aka 'present_size'
+            {   // Default to corner of the screen at native size
                 region.position = { 0.0, 0.0 };
-                region.size = { f32(present.width), f32(present.height) };
+                region.size = v2_f32{ f32( draw_image->image.size.x), f32(draw_image->image.size.y) };
             }
 
             v2_f32 clip_down_left = clip.position;

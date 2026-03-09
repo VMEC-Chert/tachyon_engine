@@ -19,6 +19,8 @@ namespace sdl
 
 namespace tyon
 {
+    FORWARD struct ui_drawable;
+
     struct sdl_window
     {
         uid id;
@@ -45,6 +47,8 @@ namespace tyon
     PROC sdl_event_process() -> void;
 
     PROC sdl_create_platform_subsystem() -> platform_subsystem;
+
+    PROC sdl_render_text( ui_drawable* arg ) -> fresult;
 
     extern sdl_context* g_sdl;
 

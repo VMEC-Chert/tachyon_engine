@@ -23,6 +23,7 @@ namespace tyon
             .name = "test_status_bar",
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
         };
+        test_status_bar->type = e_ui_drawable::mesh;
         test_status_bar->widget = test_status_widget->id;
         test_status_widget->transform.translation.z = 528 - 12;
         g_ui->tmp_bar = test_status_widget->id;
@@ -37,6 +38,23 @@ namespace tyon
         g_ui->test_image.draw_region.size = v2_f32{ 200, 200 };
         memset( g_ui->test_image.image.data, 0xFF, g_ui->test_image.image.size_bytes() );
         g_ui->test_image.write_timestamp = time_now_ns();
+
+        // SECTION: Create some text test
+        fstring quick_brown_fox = "The quick brown fox jumped over the lazy dog.";
+        fstring quick_brown_fox_lower = "the quick brown fox jumped over the lazy dog";
+        fstring quick_brown_fox_upper = "THE QUICK BROWN FOX JUMPED OVER THE LAZY DOG";
+        ui_drawable* test_text = entity_allocate<ui_drawable>();
+        auto text_widget = entity_allocate<ui_widget>();
+        test_text->text.text = quick_brown_fox;
+        test_text->widget = text_widget->id;
+        entity_init<ui_drawable>( test_text );
+        sdl_render_text( test_text );
+        test_text->image_.name = "quick_brown_fox";
+        test_text->image_.id = uuid_generate();
+
+        entity_init( test_text );
+        entity_init( text_widget );
+        g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
 
         TYON_LOG( "UI Initialized" );
 

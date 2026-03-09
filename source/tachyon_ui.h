@@ -449,13 +449,24 @@ struct entity_type_definition<ui_drawable>
         {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
         }
         // TODO: Cache this result for high poly geometry
-        widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
+        switch (arg->type)
+        {
+            case e_ui_drawable::mesh:
+            {
+                widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
 
-        // TODO: Construct transform from widget hierarchy
-        arg->geometry.transform = widget->transform;
+                // TODO: Construct transform from widget hierarchy
+                arg->geometry.transform = widget->transform;
 
-        // Queue the drawable for drawing
-        g_render->draw_queue_mesh.push_tail( &arg->geometry );
+                // Queue the drawable for drawing
+                g_render->draw_queue_mesh.push_tail( &arg->geometry );
+            }
+            case e_ui_drawable::text:
+            {
+
+            }
+            default: break;
+        }
     }
 
     static PROC context_tick( void* context ) -> void {}
