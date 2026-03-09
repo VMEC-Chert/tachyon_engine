@@ -391,7 +391,7 @@ struct vulkan_context
 
 
     // Configurables
-    VkFormat swapchain_image_format = VK_FORMAT_B8G8R8A8_UNORM;
+    VkFormat swapchain_image_format = VK_FORMAT_B8G8R8A8_SRGB;
     /** This should be enough to fit 1 very large object, like 1 million verticies
         1 200 000 × 4 × 3 × 4 = 54.931 MiB
 

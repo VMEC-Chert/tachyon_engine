@@ -1361,7 +1361,11 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     VkImageCreateInfo image_args {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
-        .format = VK_FORMAT_B8G8R8A8_UNORM,
+        /** RGBA Follows endianness. This is allowed for the transfer image but not the swapchain image
+
+        NOTE: Seriously? The driver just ignores this format and makes you swizzle the
+        channels manually anyway, so we have to use BGRA format for blitting */
+        .format = VK_FORMAT_B8G8R8A8_SRGB,
         .extent = VkExtent3D { u32(arg->image.size.x), u32(arg->image.size.y), 1 },
         .mipLevels = 1,
         .arrayLayers = 1,
@@ -1674,6 +1678,11 @@ PROC vulkan_image_prepare( render_image* arg ) -> fresult
                 // Copy limited to span size
                 memory_copy_raw(
                     image_stage.data, current_image->image.data, current_image->image.size_bytes() );
+
+                // Need to copy into GPUs preferred BGRA format. We'll just borrow the staging memory.
+                image<rgba> gpu_image = current_image->image;
+                gpu_image.data = raw_pointer(image_stage.data);
+                (void)image_color_reorder_inplace<bgra>( gpu_image );
                 vk_draw_image->update_timestamp = time_now_ns();
             }
         }
@@ -2981,16 +2990,16 @@ PROC vulkan_draw() -> void
 
             v2_f32 clip_down_left = clip.position;
             v2_f32 clip_up_right = clip.position + clip.size;
-            v2_f32 draw_down_left = region.position + region.size;
-            v2_f32 draw_up_right = region.position;
-            draw_down_left.y = present.height - draw_down_left.y;
-            draw_up_right.y =  present.height - draw_up_right.y;
+            v2_f32 draw_up_left = region.position + v2_f32{ 0.0f, region.size.y };
+            v2_f32 draw_down_right = region.position + v2_f32{ region.size.x, 0.0f };
+            draw_up_left.y = present.height - draw_up_left.y;
+            draw_down_right.y =  present.height - draw_down_right.y;
 
             // Clamp draw region to framebuffer to prevent memory corruption
-            draw_down_left.x = clamp_range( 0,  present.width, draw_down_left.x );
-            draw_down_left.y = clamp_range( 0,  present.height, draw_down_left.y );
-            draw_up_right.x = clamp_range( 0,  present.height, draw_up_right.x );
-            draw_up_right.y = clamp_range( 0,  present.width, draw_up_right.y );
+            draw_up_left.x = clamp_range( 0,  present.width, draw_up_left.x );
+            draw_up_left.y = clamp_range( 0,  present.height, draw_up_left.y );
+            draw_down_right.x = clamp_range( 0,  present.height, draw_down_right.x );
+            draw_down_right.y = clamp_range( 0,  present.width, draw_down_right.y );
             clip_down_left.x = clamp_range( 0,  draw_image->image.size.x, clip_down_left.x );
             clip_down_left.y = clamp_range( 0,  draw_image->image.size.y, clip_down_left.y );
             clip_up_right.x = clamp_range( 0,  draw_image->image.size.x, clip_up_right.x );
@@ -3005,8 +3014,8 @@ PROC vulkan_draw() -> void
                 },
                 .dstSubresource = VkImageSubresourceLayers {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                 .dstOffsets = {
-                    VkOffset3D {i32(draw_down_left.x), i32(draw_down_left.y), 0},
-                    VkOffset3D { i32(draw_up_right.x), i32(draw_up_right.y), 1 }
+                    VkOffset3D {i32(draw_up_left.x), i32(draw_up_left.y), 0},
+                    VkOffset3D { i32(draw_down_right.x), i32(draw_down_right.y), 1 }
                 },
             };
 

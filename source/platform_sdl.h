@@ -30,6 +30,8 @@ namespace tyon
     {
         window* main_window = nullptr;
         array<sdl_window> windows;
+        sdl::TTF_Font* default_font = nullptr;
+        f32 default_font_size = 16;
     };
 
     // Platform Hooks

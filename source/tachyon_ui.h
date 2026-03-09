@@ -267,7 +267,7 @@ struct ui_layout
 
 struct ui_font
 {
-    sdl::TTF_Font* platform_font;
+    // sdl::TTF_Font* platform_font;
     f32 size_points = 0.0;
 };
 
@@ -285,7 +285,7 @@ struct ui_drawable
     bool active = true;
 
     e_ui_drawable type = e_ui_drawable::none;
-    image<rgba> image_;
+    render_image image_;
     // vector_image vector;
     text_drawable text;
     // Base colour for untextured meshes, text, or tint

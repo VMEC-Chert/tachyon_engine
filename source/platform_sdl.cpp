@@ -34,10 +34,22 @@ namespace tyon
         // TODO: Init more stuff here as you use more things
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD );
 
-        i32 major = 4;
-        i32 minor = 4;
-        SDL_GL_GetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, &major );
-        SDL_GL_GetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, &minor );
+        // Setup default font
+        sdl::TTF_Init();
+
+        // TODO: Load font as asset
+        ui_font& font = g_ui->default_font;
+        file* noto_sans_file = entity_allocate<file>();
+        *noto_sans_file = file_load_binary( "data/fonts/noto_sans/NotoSans-Regular.ttf" );
+        SDL_IOStream* noto_sans_io = SDL_IOFromMem(
+            noto_sans_file->memory.data, noto_sans_file->memory.size );
+        sdl::TTF_Font* noto_sans = sdl::TTF_OpenFontIO( noto_sans_io, true, 16 );
+        sdl::TTF_SetFontHinting( noto_sans, sdl::TTF_HINTING_LIGHT_SUBPIXEL );
+
+        g_sdl->default_font = noto_sans;
+        if (g_sdl->default_font)
+        {   TYON_LOG( "Created default font" );
+        }
 
         // Enumerate video drivers
         array<fstring> video_drivers;
@@ -76,9 +88,8 @@ namespace tyon
     {
         PROFILE_SCOPE_FUNCTION();
         SDL_DestroyWindow( g_sdl->windows[0].handle );
-        // TTF_CloseFont( default_font );
-        // default_font = nullptr;
-        // TTF_Quit();
+        sdl::TTF_CloseFont( g_sdl->default_font );
+        sdl::TTF_Quit();
         SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD );
         SDL_Quit();
 
@@ -286,5 +297,24 @@ namespace tyon
             .vulkan_surface_create = sdl_vulkan_surface_create
         };
         return result;
+    }
+
+    PROC sdl_render_text( ui_drawable* arg ) -> fresult
+    {
+        const text_drawable& props = arg->text;
+        SDL_Surface* text_surface {};
+        if (props.wrapped)
+        {
+            SDL_Color sdl_white = { 255, 255, 255, 255 };
+            text_surface = sdl::TTF_RenderText_Blended(
+                g_sdl->default_font, props.text.c_str(), props.text.size(), sdl_white );
+        }
+        if (text_surface)
+        {
+            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_ARGB32,
+                         "Our internal API must have changed." );
+            SDL_DestroySurface( text_surface );
+        }
+        return false;
     }
 }
