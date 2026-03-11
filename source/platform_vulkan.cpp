@@ -2701,7 +2701,7 @@ PROC vulkan_draw() -> void
                 
                 v2_f32 image_size = vk_image->size;
                 VkBufferImageCopy copy_region {
-                    .bufferOffset = x_transfer->position,
+                    .bufferOffset = static_cast<u64>(x_transfer->position),
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource = {
