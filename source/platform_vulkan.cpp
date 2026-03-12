@@ -535,15 +535,322 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
         g_vulkan->vk_allocator,
         &arg->platform_pipeline );
     if (pipeline_ok)
-    {   VULKAN_ERROR( "Failed to create graphics pipeline" ); return false; }
+    {   VULKAN_ERROR( "Failed to create graphics pipeline" );
+        return false; }
     VULKAN_LOG( "Created graphics pipeline" );
+    vulkan_label_object( (u64)arg->platform_pipeline, VK_OBJECT_TYPE_PIPELINE,
+                             fmt::format( "{}_mesh_pipeline", arg->name ) );
+
     g_vulkan->resources.push_cleanup( [pipeline = arg->platform_pipeline] {
         VULKAN_LOG( "Destroying graphics pipeline" );
         vkDestroyPipeline( g_vulkan->logical_device, pipeline,
                            g_vulkan->vk_allocator );
     });
 
-    return false;
+    return true;
+}
+
+PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
+{
+    PROFILE_SCOPE_FUNCTION();
+    if (arg->id.valid())
+    {   VULKAN_ERRORF("{} Using init on a object that's already initialized doesn't make any sense.",
+                      arg->name );
+        return false;
+    }
+    if (arg->shaders.size() <= 0)
+    {   VULKAN_ERRORF( "{} Tried to create a shader pipeline with no shaders attached.",
+                       arg->name );
+        return false;
+    }
+
+    arg->id = uuid_generate();
+    if (arg->swapchain == nullptr)
+    {   VULKAN_LOGF( "No swapchain provided to pipeline '{}', using global swapchain", arg->name );
+        arg->swapchain = &g_vulkan->swapchain;
+    }
+    if (arg->swapchain == nullptr)
+    {   VULKAN_ERRORF( "No valid swapchain usable for pipeline, failed to create mesh pipeline {}",
+                       arg->name );
+        return false;
+    }
+
+    array<VkPipelineShaderStageCreateInfo> stages;
+    stages.change_allocation( arg->shaders.size() );
+    for (i64 i=0; i < arg->shaders.size(); ++i)
+    {
+        auto& x_shader = arg->shaders[i];
+        stages.push_tail( VkPipelineShaderStageCreateInfo {
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = x_shader.stage_flag,
+                .vk_module = x_shader.platform_module,
+                .pName = x_shader.entry_point.c_str(),
+            });
+    }
+
+    /* SECTION: Setup shader input locations as "vertex-binding"
+
+     Here we use a pre-defined shader input/buffer format that will be passed
+     along to the shader. The data will later by bound using `vkCmdBindVertexBuffers`
+
+     Format:
+     0 - Vertex Normal
+     1 - Vertex Positions
+     2 - Texture Interpolated Diffuse Colour
+    */
+    array<VkVertexInputBindingDescription> bindings {
+
+    };
+
+    array<VkVertexInputAttributeDescription> vertex_attributes {
+
+    };
+
+    // Mesh vertex input args
+    VkPipelineVertexInputStateCreateInfo vertex_args {};
+    vertex_args.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_args.pVertexBindingDescriptions =  bindings.data;
+    vertex_args.vertexBindingDescriptionCount = bindings.size();
+    vertex_args.pVertexAttributeDescriptions = vertex_attributes.data;
+    vertex_args.vertexAttributeDescriptionCount = vertex_attributes.size();
+
+    // Mesh rendering settings
+    VkPipelineInputAssemblyStateCreateInfo input_args {};
+    input_args.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_args.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_args.primitiveRestartEnable = VK_FALSE;
+
+    // Rasterizer settings
+    VkPipelineRasterizationStateCreateInfo raster_args {};
+    raster_args.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster_args.polygonMode = VK_POLYGON_MODE_FILL;
+    // raster_args.polygonMode = VK_POLYGON_MODE_LINE;
+    raster_args.lineWidth = 1.0f;
+    raster_args.cullMode = VK_CULL_MODE_BACK_BIT;
+    // TODO: TEST no cull mode
+    raster_args.cullMode = VK_CULL_MODE_NONE;
+    raster_args.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster_args.depthBiasEnable = VK_FALSE;
+    raster_args.depthBiasConstantFactor = 0.0f;         // Optional
+    raster_args.depthBiasClamp = 0.0f;                  // Optional
+    raster_args.depthBiasSlopeFactor = 0.0f;            // Optional
+
+    VkViewport viewport_config {
+        // Upper left coordinates
+        .x = 0,
+        .y = 0,
+        .width = float(arg->swapchain->vk_present_size.width),
+        .height = float(arg->swapchain->vk_present_size.height),
+        // Configurable viewport depth, can configurable but usually between 0 and 1
+        .minDepth = 0.0,
+        .maxDepth = 1.0
+    };
+
+    // Only render into a certain portion of the viewport with scissors
+    VkRect2D scissor_config {
+        VkOffset2D { 0, 0 },
+        arg->swapchain->vk_present_size
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_args {};
+    viewport_args.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_args.pViewports = &viewport_config;
+    // viewportCount and scissorCount must be the same
+    viewport_args.viewportCount = 1;
+    viewport_args.pScissors = &scissor_config;
+    viewport_args.scissorCount = 1;
+
+    VkPipelineMultisampleStateCreateInfo multisample_args {};
+    multisample_args.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_args.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample_args.sampleShadingEnable = true;
+    multisample_args.minSampleShading = 0.2f;
+    // wut is this
+    multisample_args.pSampleMask = nullptr;
+    multisample_args.alphaToCoverageEnable = false;
+    multisample_args.alphaToOneEnable = false;
+
+    VkPipelineColorBlendAttachmentState color_blend_attachment{};
+    color_blend_attachment.colorWriteMask = (
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
+    color_blend_attachment.blendEnable = VK_TRUE;
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
+    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
+
+    VkPipelineColorBlendStateCreateInfo color_blend_args{};
+    color_blend_args.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    color_blend_args.logicOpEnable = VK_FALSE;
+    color_blend_args.logicOp = VK_LOGIC_OP_COPY; // Optional
+    color_blend_args.attachmentCount = 1;
+    color_blend_args.pAttachments = &color_blend_attachment;
+    color_blend_args.blendConstants[0] = 0.0f; // Optional
+    color_blend_args.blendConstants[1] = 0.0f; // Optional
+    color_blend_args.blendConstants[2] = 0.0f; // Optional
+    color_blend_args.blendConstants[3] = 0.0f; // Optional
+
+    /* NOTE: A pipeline can be set to have some of it's state become dynamic
+       after creation.  Which may be a performance benefit for tasks its
+       relevant to. This setion describes what state can be dynamic instead of
+       static.*/
+    array<VkDynamicState> dynamic_states_selected = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+    };
+    VkPipelineDynamicStateCreateInfo dynamic_state_args {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = cast<u32>(dynamic_states_selected.size()),
+        .pDynamicStates = dynamic_states_selected.data,
+    };
+
+    VkSampler image_sampler {};
+    VkSamplerCreateInfo sampler_args{};
+    sampler_args.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_args.magFilter               = VK_FILTER_LINEAR;
+    sampler_args.minFilter               = VK_FILTER_LINEAR;
+    sampler_args.addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_args.addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_args.addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_args.anisotropyEnable        = VK_FALSE;
+    sampler_args.maxAnisotropy           = 1.0f;
+    sampler_args.borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    sampler_args.unnormalizedCoordinates = VK_FALSE;
+
+    vkCreateSampler( g_vulkan->logical_device, &sampler_args, g_vulkan->vk_allocator, &image_sampler );
+
+    /** Official Documentation: Descriptor Set
+
+        An object that resource descriptors are written into via the API, and that can be bound to a
+        command buffer such that the descriptors contained within it can be accessed from shaders.
+        Represented by a VkDescriptorSet object.
+    */
+
+    array<VkDescriptorSetLayoutBinding> resource_descriptors = {
+        {
+            // Generic data uniform
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            // if it's an array of resources we're sending to the shader.
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr
+        },
+        {
+            // sampled image
+            .binding = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            // if it's an array of resources we're sending to the shader.
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr
+        },
+        {
+            // Old framebuffer contents
+            .binding = 2,
+            .descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+            // if it's an array of resources we're sending to the shader.
+            .descriptorCount = 1,
+            // NOTE: input attachments can only be on the fragment shader
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr
+        }
+    };
+    VkDescriptorSetLayoutCreateInfo descriptor_layout_args {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .flags = 0x0,
+        .bindingCount = u32(resource_descriptors.size()),
+        .pBindings = resource_descriptors.data,
+    };
+
+    /* Pipeline Layout: "An object defining the set of resources (via a
+       collection of descriptor set layouts) and push constants used by
+       pipelines that are created using the layout. Used when creating a
+       pipeline and when binding descriptor sets and setting push constant
+       values. Represented by a VkPipelineLayout object." */
+    VkPipelineLayoutCreateInfo layout_args {};
+    layout_args.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layout_args.pSetLayouts = &arg->platform_descriptor_layout;
+    layout_args.setLayoutCount = 1;
+    layout_args.pushConstantRangeCount = 0;
+    layout_args.pPushConstantRanges = nullptr;
+
+    auto descriptor_layout_ok = vkCreateDescriptorSetLayout(
+        g_vulkan->logical_device,
+        &descriptor_layout_args,
+        g_vulkan->vk_allocator,
+        &arg->platform_descriptor_layout
+    );
+    g_vulkan->resources.push_cleanup( [resource_layout = arg->platform_descriptor_layout] {
+        VULKAN_LOG( "Destroying descriptor layout set" );
+        vkDestroyDescriptorSetLayout(
+            g_vulkan->logical_device,
+            resource_layout,
+            g_vulkan->vk_allocator
+        );
+    });
+
+    auto layout_bad = vkCreatePipelineLayout(
+        g_vulkan->logical_device,
+        &layout_args,
+        g_vulkan->vk_allocator,
+        &arg->platform_layout
+    );
+    if (layout_bad)
+    {   VULKAN_ERROR( "Faled to create pipeline layout" );
+        return false;
+    }
+    g_vulkan->resources.push_cleanup( [arg] {
+        VULKAN_LOG( "Destroying pipeline layout" );
+        vkDestroyPipelineLayout( g_vulkan->logical_device, arg->platform_layout,
+                                 g_vulkan->vk_allocator );
+    });
+
+    /* SECTION: Pipeline creation args
+     *
+     * Now We have all the pipeline information set we can assemble it into
+     * creation args */
+    VkGraphicsPipelineCreateInfo pipeline_args {};
+    pipeline_args.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_args.pStages = stages.data;
+    pipeline_args.stageCount = u32(stages.size());
+    pipeline_args.pVertexInputState = &vertex_args;
+    pipeline_args.pInputAssemblyState = &input_args;
+    pipeline_args.pViewportState = &viewport_args;
+    pipeline_args.pRasterizationState = &raster_args;
+    pipeline_args.pMultisampleState = &multisample_args;
+    // pipeline_args.pDepthStencilState = nullptr; // Optional
+    pipeline_args.pColorBlendState = &color_blend_args;
+    pipeline_args.pDynamicState = &dynamic_state_args;
+    pipeline_args.layout = arg->platform_layout;
+    pipeline_args.renderPass = g_vulkan->render_pass;
+    pipeline_args.subpass = 0;
+    // pipeline_args.basePipelineHandle = VK_NULL_HANDLE; // Optional
+    // pipeline_args.basePipelineIndex = -1; // Optional
+
+    // Provide pipeline cache here if relevant
+    auto pipeline_ok = vkCreateGraphicsPipelines(
+        g_vulkan->logical_device,
+        VK_NULL_HANDLE,
+        1,
+        &pipeline_args,
+        g_vulkan->vk_allocator,
+        &arg->platform_pipeline );
+    if (pipeline_ok)
+    {   VULKAN_ERROR( "Failed to create graphics pipeline" ); return false; }
+    VULKAN_LOG( "Created graphics pipeline" );
+    vulkan_label_object( (u64)arg->platform_pipeline, VK_OBJECT_TYPE_PIPELINE,
+                         fmt::format( "{}_blit_pipeline", arg->name ) );
+    g_vulkan->resources.push_cleanup( [pipeline = arg->platform_pipeline] {
+        VULKAN_LOG( "Destroying graphics pipeline" );
+        vkDestroyPipeline( g_vulkan->logical_device, pipeline,
+                           g_vulkan->vk_allocator );
+    });
+
+    return true;
 }
 
 PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchain )
@@ -619,6 +926,8 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     swapchain_args.imageArrayLayers = 1; // More than 1 if a stereoscopic application
     // TRANSFER_DST bit is useful for copying images directly into the framebuffer
     swapchain_args.imageUsage = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                 VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+                                 VK_IMAGE_USAGE_SAMPLED_BIT |
                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     swapchain_args.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_args.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
@@ -1421,7 +1730,10 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
         .pSetLayouts = &pipeline->platform_descriptor_layout
     };
     vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &descriptor_resource_args, &arg->vk_resource );
+        g_vulkan->logical_device, &descriptor_resource_args, &arg->mesh_resource );
+    vkAllocateDescriptorSets(
+        g_vulkan->logical_device, &descriptor_resource_args, &arg->blit_resource
+ );
 
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
@@ -1487,6 +1799,27 @@ PROC vulkan_init_pipelines() -> void
         pipeline.shaders.push_tail( vertex_shader );
         pipeline.shaders.push_tail( fragment_shader );
         vulkan_pipeline_mesh_init( &g_vulkan->ui_mesh_pipeline );
+    }
+    {
+        vulkan_shader vertex_shader {};
+        vulkan_shader fragment_shader {};
+
+        vertex_shader.name = "ui_blit_vertex";
+        vertex_shader.code.filename = "data/shaders/ui_blit.vert.spv";
+        vertex_shader.code_binary = true;
+        vertex_shader.stage_flag = VK_SHADER_STAGE_VERTEX_BIT;
+        fragment_shader.name = "ui_blit_fragment";
+        fragment_shader.code.filename = "data/shaders/ui_blit.frag.spv";
+        fragment_shader.code_binary = true;
+        fragment_shader.stage_flag = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        vulkan_shader_init( &vertex_shader );
+        vulkan_shader_init( &fragment_shader );
+
+        vulkan_pipeline& pipeline = g_vulkan->ui_blit_pipeline;
+        pipeline.shaders.push_tail( vertex_shader );
+        pipeline.shaders.push_tail( fragment_shader );
+        vulkan_pipeline_blit_init( &pipeline );
     }
 }
 
@@ -2299,6 +2632,7 @@ PROC vulkan_init() -> fresult
     VkAttachmentDescription color_attachment {};
     color_attachment.format = self->swapchain_image_format;
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    // Load the previous content of the framebuffer/input attachment
     color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -2313,11 +2647,20 @@ PROC vulkan_init() -> fresult
             .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         },
     };
+    array<VkAttachmentReference> input_attachment_refs {
+        VkAttachmentReference {
+            .attachment = 0,
+            // Can't read and write from the oOsame attachment
+            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        }
+    };
 
     // sub-pass first
     VkSubpassDescription sub_pass {};
+    sub_pass.pInputAttachments = input_attachment_refs.data;
+    sub_pass.inputAttachmentCount = input_attachment_refs.size();
     sub_pass.pColorAttachments = color_attachment_refs.data;
-    sub_pass.colorAttachmentCount = 1;
+    sub_pass.colorAttachmentCount = color_attachment_refs.size();
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
     VkRenderPassCreateInfo pass_args{};
@@ -2603,7 +2946,7 @@ PROC vulkan_draw() -> void
     VkWriteDescriptorSet resource_write_args {
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .pNext = nullptr,
-        .dstSet = current_frame->vk_resource,
+        .dstSet = current_frame->mesh_resource,
         .dstBinding = 0,
         .dstArrayElement = 0,
         .descriptorCount = 1,
@@ -2871,7 +3214,7 @@ PROC vulkan_draw() -> void
                                 current_pipeline->platform_layout,
                                 first_set_offset,
                                 resource_n,
-                                &current_frame->vk_resource,
+                                &current_frame->mesh_resource,
                                 dynamic_offsets_n,
                                 dynamic_offsets
                                 );
@@ -2919,43 +3262,6 @@ PROC vulkan_draw() -> void
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &self->queue_submit_semaphore,
     };
-
-    // VkResult sync_ok = vkWaitForFences(
-    //     self->logical_device,
-    //     1,
-    //     &self->frame_begin_fence,
-    //     true,
-    //     16'666'666
-    // );
-    // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
-    vkCmdEndRenderPass( command_buffer );
-
-    // Have to transition the image layout with sychronisation to perform the image blit
-    // Transition the framebuffer to destination
-    VkImageMemoryBarrier blit_framebuffer_barrier =
-    {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        // no prior access needed for present → transfer
-        .srcAccessMask       = 0,
-        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
-        // or UNDEFINED on first acquire
-        // TODO: update old layout to vulkan_image->layout
-        .oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .image               = g_vulkan->swapchain_images[ inflight_frame_i ],
-        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-    };
-
-    vkCmdPipelineBarrier(
-        command_buffer,
-         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &blit_framebuffer_barrier
-    );
 
     /* NOTE: Vulkan spec states that blitting cannot happen inside of an active render pass */
     for (i32 i=0; i < current_frame->draw_queue_image.size(); ++i)
@@ -3019,68 +3325,88 @@ PROC vulkan_draw() -> void
                 },
             };
 
-            // Transition the blit image to soruce since we're copying from it
-            VkImageMemoryBarrier image_barrier =
-            {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                // no prior access needed for present → transfer
-                .srcAccessMask       = 0,
-                .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
-                // or UNDEFINED on first acquire
-                .oldLayout           = vk_draw_image->layout,
-                // We're writing so use transfer destination layout
-                .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                .image               = vk_draw_image->platform_image,
-                .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-            };
+            // // Transition the blit image to soruce since we're copying from it
+            // VkImageMemoryBarrier image_barrier =
+            // {
+            //     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            //     // no prior access needed for present → transfer
+            //     .srcAccessMask       = 0,
+            //     .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+            //     // or UNDEFINED on first acquire
+            //     .oldLayout           = vk_draw_image->layout,
+            //     // We're writing so use transfer destination layout
+            //     .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            //     .image               = vk_draw_image->platform_image,
+            //     .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            // };
 
-            vkCmdPipelineBarrier(
+            // vkCmdPipelineBarrier(
+            //     command_buffer,
+            //     // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+            //     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            //     VK_PIPELINE_STAGE_TRANSFER_BIT,
+            //     0,
+            //     0, nullptr,
+            //     0, nullptr,
+            //     1, &image_barrier
+            // );
+
+            current_pipeline = &g_vulkan->ui_blit_pipeline;
+            vkCmdBindPipeline(
                 command_buffer,
-                // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0,
-                0, nullptr,
-                0, nullptr,
-                1, &image_barrier
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                current_pipeline->platform_pipeline
             );
-
-            u32 vk_region_n = 1;
-            vkCmdBlitImage(
+            u32 first_set_offset = 0;
+            u32 resource_n = 1;
+            const uint32_t* dynamic_offsets = nullptr;
+            u32 dynamic_offsets_n = 0;
+            vkCmdBindDescriptorSets(
                 command_buffer,
-                vk_draw_image->platform_image,
-                vk_draw_image->layout,
-                g_vulkan->swapchain_images[ inflight_frame_i ],
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                vk_region_n,
-                &vk_region,
-                VK_FILTER_LINEAR
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                current_pipeline->platform_layout,
+                first_set_offset,
+                resource_n,
+                &current_frame->blit_resource,
+                dynamic_offsets_n,
+                dynamic_offsets
             );
-
+            /* Draw a triangle covering the entire screen and stretching outside the boundaries
+               But generate the triangle directly in the shader */
+            vkCmdDraw( command_buffer, 3, 1, 0, 0 );
         }
     }
-    // Now transition back to present
-    VkImageMemoryBarrier present_barrier = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        // no prior access needed for present → transfer
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .image = g_vulkan->swapchain_images[ inflight_frame_i ],
-        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-    };
+    // // Now transition back to present
+    // VkImageMemoryBarrier present_barrier = {
+    //     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+    //     // no prior access needed for present → transfer
+    //     .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+    //     .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+    //     .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    //     .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    //     .image = g_vulkan->swapchain_images[ inflight_frame_i ],
+    //     .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    // };
 
-    vkCmdPipelineBarrier(
-        command_buffer,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &present_barrier
-    );
+    // vkCmdPipelineBarrier(
+    //     command_buffer,
+    //     VK_PIPELINE_STAGE_TRANSFER_BIT,
+    //     VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+    //     0,
+    //     0, nullptr,
+    //     0, nullptr,
+    //     1, &present_barrier
+    // );
 
+    // VkResult sync_ok = vkWaitForFences(
+    //     self->logical_device,
+    //     1,
+    //     &self->frame_begin_fence,
+    //     true,
+    //     16'666'666
+    // );
+    // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
+    vkCmdEndRenderPass( command_buffer );
     vkEndCommandBuffer( command_buffer );
     TracyCZoneEnd( zone_record_commands_frame );
 
