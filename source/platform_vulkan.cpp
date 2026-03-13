@@ -708,7 +708,7 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         .pDynamicStates = dynamic_states_selected.data,
     };
 
-    VkSampler image_sampler {};
+    VkSampler& image_sampler = arg->base_sampler;
     VkSamplerCreateInfo sampler_args{};
     sampler_args.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sampler_args.magFilter               = VK_FILTER_LINEAR;
@@ -721,7 +721,10 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     sampler_args.borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     sampler_args.unnormalizedCoordinates = VK_FALSE;
 
-    vkCreateSampler( g_vulkan->logical_device, &sampler_args, g_vulkan->vk_allocator, &image_sampler );
+    VkResult sample_bad = vkCreateSampler(
+        g_vulkan->logical_device, &sampler_args, g_vulkan->vk_allocator, &image_sampler );
+    if (sample_bad)
+    {   VULKAN_ERRORF( "Failed to create sampler: {}", sample_bad ); }
 
     /** Official Documentation: Descriptor Set
 
@@ -1694,7 +1697,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
     image->associated_image = arg->id;
-    image->layout = image_args.initialLayout;
+    image->platform_layout = image_args.initialLayout;
     VkResult image_bad = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
     if (image_bad)
@@ -1714,6 +1717,27 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     image->staging_buffer.memory_flags =
         (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
+
+    // Create an image view
+    VkImageViewCreateInfo view_args{};
+    view_args.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_args.image = image->platform_image;
+    view_args.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_args.format = image_args.format;
+    view_args.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    view_args.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    view_args.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    view_args.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    view_args.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_args.subresourceRange.baseMipLevel = 0;
+    view_args.subresourceRange.levelCount = 1;
+    view_args.subresourceRange.baseArrayLayer = 0;
+    view_args.subresourceRange.layerCount = 1;
+
+    VkResult view_bad = vkCreateImageView(
+        g_vulkan->logical_device, &view_args, g_vulkan->vk_allocator, &image->platform_view );
+    vulkan_label_object( (u64)image->platform_image, VK_OBJECT_TYPE_IMAGE_VIEW,
+                         arg->name + "_image_view");
 
     image->id = uuid_generate();
     VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
@@ -3090,9 +3114,9 @@ PROC vulkan_draw() -> void
                         .srcAccessMask       = 0,
                         .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
                         // or UNDEFINED on first acquire
-                        .oldLayout           = vk_image->layout,
+                        .oldLayout           = vk_image->platform_layout,
                         // Make it available to use now
-                        .newLayout           = vk_image->layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        .newLayout           = vk_image->platform_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         .image               = vk_image->platform_image,
                         .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
                     };
@@ -3111,7 +3135,7 @@ PROC vulkan_draw() -> void
                         command_buffer,
                         staging_buffer,
                         vk_image->platform_image,
-                        vk_image->layout,
+                        vk_image->platform_layout,
                         1,
                         &copy_region
                     );
@@ -3349,32 +3373,57 @@ PROC vulkan_draw() -> void
             };
 
             // // Transition the blit image to soruce since we're copying from it
-            // VkImageMemoryBarrier image_barrier =
-            // {
-            //     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            //     // no prior access needed for present → transfer
-            //     .srcAccessMask       = 0,
-            //     .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
-            //     // or UNDEFINED on first acquire
-            //     .oldLayout           = vk_draw_image->layout,
-            //     // We're writing so use transfer destination layout
-            //     .newLayout           = vk_draw_image->layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            //     .image               = vk_draw_image->platform_image,
-            //     .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-            // };
+            VkImageMemoryBarrier image_barrier =
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                // no prior access needed for present → transfer
+                .srcAccessMask       = 0,
+                .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+                // or UNDEFINED on first acquire
+                .oldLayout           = vk_draw_image->platform_layout,
+                // We're writing so use transfer destination layout
+                .newLayout           = (vk_draw_image->platform_layout =
+                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                .image               = vk_draw_image->platform_image,
+                .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            };
 
-            // vkCmdPipelineBarrier(
-            //     command_buffer,
-            //     // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-            //     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            //     VK_PIPELINE_STAGE_TRANSFER_BIT,
-            //     0,
-            //     0, nullptr,
-            //     0, nullptr,
-            //     1, &image_barrier
-            // );
+            vkCmdPipelineBarrier(
+                command_buffer,
+                // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                // NOTE: Requires when doing a barrier/transition inside a render pass
+                VK_DEPENDENCY_VIEW_LOCAL_BIT,
+                0, nullptr,
+                0, nullptr,
+                1, &image_barrier
+            );
 
+
+            // Update the image/texture
+            // NOTE: Validation says it prefers descriptors to be updated before binding them
             current_pipeline = &g_vulkan->ui_blit_pipeline;
+            VkDescriptorImageInfo image_info {
+                .sampler = current_pipeline->base_sampler,
+                .imageView = vk_draw_image->platform_view,
+                // TODO: Maybe transition to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                .imageLayout = vk_draw_image->platform_layout
+            };
+            VkWriteDescriptorSet resource_write_args {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = current_frame->blit_resource,
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = &image_info,
+                .pBufferInfo = nullptr,
+                .pTexelBufferView = nullptr
+            };
+            vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+
             vkCmdBindPipeline(
                 command_buffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -3394,6 +3443,7 @@ PROC vulkan_draw() -> void
                 dynamic_offsets_n,
                 dynamic_offsets
             );
+
             /* Draw a triangle covering the entire screen and stretching outside the boundaries
                But generate the triangle directly in the shader */
             vkCmdDraw( command_buffer, 3, 1, 0, 0 );

@@ -74,6 +74,7 @@ struct vulkan_pipeline
     VkDescriptorPool vk_resource_pool {};
     VkDescriptorSetLayout platform_descriptor_layout {};
     VkRenderPass platform_render_pass {};
+    VkSampler base_sampler {};
 
 };
 
@@ -264,7 +265,8 @@ struct vulkan_image
     vulkan_memory_entry memory;
     vulkan_buffer staging_buffer;
     /** Current tracked layout */
-    VkImageLayout layout;
+    VkImageLayout platform_layout;
+    VkImageView platform_view;
 };
 
 
