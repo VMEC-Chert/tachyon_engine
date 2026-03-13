@@ -3374,7 +3374,7 @@ PROC vulkan_draw() -> void
                 },
             };
 
-            // // Transition the blit image to soruce since we're copying from it
+            // Transition the blit image a SHADER_READ_ONLY so the shader can read it
             VkImageMemoryBarrier image_barrier =
             {
                 .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -3395,13 +3395,12 @@ PROC vulkan_draw() -> void
                 // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
-                // NOTE: Requires when doing a barrier/transition inside a render pass
+                // NOTE: Required flag when doing a barrier/transition inside a render pass
                 VK_DEPENDENCY_VIEW_LOCAL_BIT,
                 0, nullptr,
                 0, nullptr,
                 1, &image_barrier
             );
-
 
             // Update the image/texture
             // NOTE: Validation says it prefers descriptors to be updated before binding them
@@ -3409,7 +3408,6 @@ PROC vulkan_draw() -> void
             VkDescriptorImageInfo image_info {
                 .sampler = current_pipeline->base_sampler,
                 .imageView = vk_draw_image->platform_view,
-                // TODO: Maybe transition to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
                 .imageLayout = vk_draw_image->platform_layout
             };
             VkWriteDescriptorSet resource_write_args {
@@ -3451,17 +3449,6 @@ PROC vulkan_draw() -> void
             vkCmdDraw( command_buffer, 3, 1, 0, 0 );
         }
     }
-    // // Now transition back to present
-    // VkImageMemoryBarrier present_barrier = {
-    //     .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-    //     // no prior access needed for present → transfer
-    //     .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-    //     .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
-    //     .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-    //     .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-    //     .image = g_vulkan->swapchain_images[ inflight_frame_i ],
-    //     .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-    // };
 
     // vkCmdPipelineBarrier(
     //     command_buffer,
