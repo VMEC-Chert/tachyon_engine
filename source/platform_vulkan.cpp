@@ -1738,7 +1738,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     VkResult view_bad = vkCreateImageView(
         g_vulkan->logical_device, &view_args, g_vulkan->vk_allocator, &image->platform_view );
-    vulkan_label_object( (u64)image->platform_image, VK_OBJECT_TYPE_IMAGE_VIEW,
+    vulkan_label_object( (u64)image->platform_view, VK_OBJECT_TYPE_IMAGE_VIEW,
                          arg->name + "_image_view");
 
     image->id = uuid_generate();
