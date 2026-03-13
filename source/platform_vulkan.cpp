@@ -718,7 +718,8 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     sampler_args.addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sampler_args.anisotropyEnable        = VK_FALSE;
     sampler_args.maxAnisotropy           = 1.0f;
-    sampler_args.borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    // NOTE: Make non-any pixels off the edge transparent
+    sampler_args.borderColor             = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
     sampler_args.unnormalizedCoordinates = VK_FALSE;
 
     VkResult sample_bad = vkCreateSampler(
