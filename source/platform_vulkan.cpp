@@ -675,11 +675,12 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
     color_blend_attachment.blendEnable = VK_TRUE;
-    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    // TODO: I have no idea what these factors I, AI seems to think it's right and it looks right
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
-    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE; // Optional
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
+    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
     VkPipelineColorBlendStateCreateInfo color_blend_args{};
@@ -1722,18 +1723,28 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
-    VkDescriptorSetAllocateInfo descriptor_resource_args {
+    VkDescriptorSetAllocateInfo mesh_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pipeline->vk_resource_pool,
         // Only allocating 1 frame at a time
         .descriptorSetCount = 1,
-        .pSetLayouts = &pipeline->platform_descriptor_layout
+        .pSetLayouts = &g_vulkan->mesh_pipeline.platform_descriptor_layout
     };
-    vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &descriptor_resource_args, &arg->mesh_resource );
-    vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &descriptor_resource_args, &arg->blit_resource
- );
+    VkDescriptorSetAllocateInfo blit_resource_args {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pipeline->vk_resource_pool,
+        // Only allocating 1 frame at a time
+        .descriptorSetCount = 1,
+        .pSetLayouts = &g_vulkan->ui_blit_pipeline.platform_descriptor_layout
+    };
+
+    VkResult mesh_resource_bad = vkAllocateDescriptorSets(
+        g_vulkan->logical_device, &mesh_resource_args, &arg->mesh_resource );
+    VkResult blit_resource_bad = vkAllocateDescriptorSets(
+        g_vulkan->logical_device, &blit_resource_args, &arg->blit_resource );
+    if (mesh_resource_bad || blit_resource_bad)
+    {   VULKAN_ERRORF( "Failed to create descriptor sets {} {}", mesh_resource_bad, blit_resource_bad );
+    }
 
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
@@ -2694,17 +2705,29 @@ PROC vulkan_init() -> fresult
      *
      * TODO: Need to figure out if we can use descriptor resources from 2
      * different pools in the same shader */
-    VkDescriptorPoolSize descriptor_size {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = u32(g_vulkan->frames_inflight_count)
+    // NOTE: Say which descriptor types we want
+    // HACK: Just grab an arbitrary 20 many descriptors for each
+    array<VkDescriptorPoolSize> descriptor_sizes {
+        {
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+        },
+        {
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+        },
+        {
+            .type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+        }
     };
 
     VkDescriptorPoolCreateInfo descriptor_pool_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0x0,
-        .maxSets = u32(g_vulkan->frames_inflight_count),
-        .poolSizeCount = 1,
-        .pPoolSizes = &descriptor_size
+        .maxSets = u32(g_vulkan->frames_inflight_count * 20),
+        .poolSizeCount = descriptor_sizes.size(),
+        .pPoolSizes = descriptor_sizes.data
     };
 
     VkDescriptorPool frame_descriptor_pool;
@@ -3436,4 +3459,8 @@ PROC vulkan_draw() -> void
     // self->logical_device, 1, &frame_end_fence, true, 1'000'000'000 );
 }
 
+
 }
+
+PROC format_as( VkResult arg ) -> tyon::fstring
+{   return string_VkResult(arg); }

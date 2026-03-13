@@ -288,7 +288,9 @@ struct vulkan_frame
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
     /* VkDescriptorPool descriptor_resource_pool; */
-    VkDescriptorSet vk_resource;
+    /** Mesh pipeline specific source */
+    VkDescriptorSet mesh_resource;
+    VkDescriptorSet blit_resource;
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
 };
@@ -325,6 +327,7 @@ struct vulkan_context
     VkPipeline pipeline;
     vulkan_pipeline mesh_pipeline;
     vulkan_pipeline ui_mesh_pipeline;
+    vulkan_pipeline ui_blit_pipeline;
 
     // Ungrouped threading primitives
     VkFence frame_begin_fence;
@@ -495,3 +498,5 @@ PROC vulkan_draw() -> void;
 extern vulkan_context* g_vulkan;
 
 }
+
+PROC format_as( VkResult arg ) -> tyon::fstring;

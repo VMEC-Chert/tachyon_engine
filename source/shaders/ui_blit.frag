@@ -6,12 +6,12 @@ layout(binding = 1) uniform sampler2D texSampler;
 
 
 // SECTION: Shader Outputs
-layout (location = 0) out vec4 out_color;d
+layout (location = 0) out vec4 out_color;
 
 void main()
 {
-    vec4 old_color = subpassLoad( input_color );
-    out_color = old_color;
+
+    out_color = vec4(0.0);
     // textSampler
     // out_color = old_color;
 }
