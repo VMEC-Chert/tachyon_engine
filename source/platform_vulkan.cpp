@@ -675,12 +675,12 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT);
     color_blend_attachment.blendEnable = VK_TRUE;
-    // TODO: I have no idea what these factors I, AI seems to think it's right and it looks right
+    // TODO: No idea what these factors should be
     color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
     color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
     VkPipelineColorBlendStateCreateInfo color_blend_args{};
@@ -713,9 +713,10 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     sampler_args.sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     sampler_args.magFilter               = VK_FILTER_LINEAR;
     sampler_args.minFilter               = VK_FILTER_LINEAR;
-    sampler_args.addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_args.addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_args.addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    // NOTE: CLAMP_TO_EDGE is different to CLAMP_TO_BORDER, do not make m mistake.
+    sampler_args.addressModeU            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sampler_args.addressModeV            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sampler_args.addressModeW            = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     sampler_args.anisotropyEnable        = VK_FALSE;
     sampler_args.maxAnisotropy           = 1.0f;
     // NOTE: Make non-any pixels off the edge transparent

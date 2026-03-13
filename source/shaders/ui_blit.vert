@@ -20,5 +20,5 @@ void main()
 {
     int vertex_id = gl_VertexIndex;
     gl_Position = vec4( vertexes[ vertex_id ], 1.0 );
-    uv_coord = uvs[ vertex_id ] * 10;
+    uv_coord = uvs[ vertex_id ];
 }
