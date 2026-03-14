@@ -987,24 +987,10 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     framebuffer_errors.resize( n_swapchain_images );
     fence_errors.resize( n_swapchain_images );
 
-    // Don't forget to setup object arrays as well
-    arg->frame_end_fences.resize( n_swapchain_images );
     TracyCZoneEnd( zone_4 );
     TracyCZoneNC( zone_5, "Zone 5", 0xA0A040, true );
     for (i32 i = 0; i < n_swapchain_images; i++)
     {
-        // Make synchronization primitives
-        VkFenceCreateInfo fence_args {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            // Start signalled
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-        };
-
-        fence_errors[i] = vkCreateFence(
-            g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, arg->frame_end_fences.address(i) );
-        vulkan_label_object( (u64)arg->frame_end_fences[i], VK_OBJECT_TYPE_FENCE,
-                             fmt::format( "{}_frame_end_fence_{}", arg->name, i ) );
-
 
         VkImageViewCreateInfo view_args{};
         view_args.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1074,7 +1060,6 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
         // multi-swapchain support
         vkDestroyImageView(
             g_vulkan->logical_device, g_vulkan->swapchain_image_views[i], g_vulkan->vk_allocator );
-        vkDestroyFence( g_vulkan->logical_device, arg->frame_end_fences[i], g_vulkan->vk_allocator );
     }
     // Lazy destroy swapcarch vmhain because the handle still needs to be reused by next swapchain
     auto swapchain = arg->platform_swapchain;
@@ -1749,28 +1734,46 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
+    /** NOTE: We are going to allocate an arbitrary amount of descriptor sets, say 2,000,
+     then start handing out descriptor sets to each individual draw call.
+     NOTE: Descriptors cannot be updated mid render pass, so that's why we need 1 per draw call. */
     VkDescriptorSetAllocateInfo mesh_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pipeline->vk_resource_pool,
-        // Only allocating 1 frame at a time
-        .descriptorSetCount = 1,
+        .descriptorSetCount = 2000,
         .pSetLayouts = &g_vulkan->mesh_pipeline.platform_descriptor_layout
     };
     VkDescriptorSetAllocateInfo blit_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pipeline->vk_resource_pool,
-        // Only allocating 1 frame at a time
-        .descriptorSetCount = 1,
+        .descriptorSetCount = 2000,
         .pSetLayouts = &g_vulkan->ui_blit_pipeline.platform_descriptor_layout
     };
 
+    vulkan_resources& mesh_resource = arg->resources.resources.push_tail({});
+    vulkan_resources& blit_resource = arg->resources.resources.push_tail({});
     VkResult mesh_resource_bad = vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &mesh_resource_args, &arg->mesh_resource );
+        g_vulkan->logical_device, &mesh_resource_args, &mesh_resource.platform_resources );
     VkResult blit_resource_bad = vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &blit_resource_args, &arg->blit_resource );
+        g_vulkan->logical_device, &blit_resource_args, &blit_resource.platform_resources );
     if (mesh_resource_bad || blit_resource_bad)
     {   VULKAN_ERRORF( "Failed to create descriptor sets {} {}", mesh_resource_bad, blit_resource_bad );
+        return false;
     }
+    mesh_resource.set_count = mesh_resource_args.descriptorSetCount;
+    blit_resource.set_count = blit_resource_args.descriptorSetCount;
+
+    // SECTION: Make synchronization primitives
+    VkFenceCreateInfo fence_args {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        // Start signalled
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    VkResult fence_bad = vkCreateFence(
+        g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &arg->end_fence );
+    vulkan_label_object( (u64)arg->end_fence, VK_OBJECT_TYPE_FENCE, "frame_end_fence"  );
+
 
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
@@ -1785,9 +1788,28 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
 
     vulkan_memory_block& uniform_block = vulkan_memory_get_block(
         &g_vulkan->device_memory, &arg->general_uniform_buffer.memory );
-    /** WARNING: Please don't try to unmap memory suballocated from a buffer it
-        will immediately invalidate every buffer associated with the device
-        memory object. */
+
+    // Create a command buffer for this one frame
+    VkCommandBufferAllocateInfo command_args{};
+    command_args.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_args.commandPool = g_vulkan->command_pool;
+    command_args.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    command_args.commandBufferCount = 1;
+
+    VkResult command_buffer_bad = vkAllocateCommandBuffers(
+        g_vulkan->logical_device, &command_args, &arg->command );
+    if (command_buffer_bad)
+    {
+        VULKAN_ERROR( "Failed to allocate command buffers" );
+        return false;
+    }
+    g_vulkan->resources.push_cleanup( [command_buffer = arg->command] {
+        vkFreeCommandBuffers(
+            g_vulkan->logical_device, g_vulkan->command_pool,
+            g_vulkan->frames_inflight_count, &command_buffer
+        );
+    } );
+
     return true;
 }
 
@@ -2523,28 +2545,6 @@ PROC vulkan_init() -> fresult
             g_vulkan->logical_device, g_vulkan->command_pool, g_vulkan->vk_allocator );
     } );
 
-    // Create a command buffer
-    VkCommandBufferAllocateInfo command_args{};
-    command_args.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    command_args.commandPool = command_pool;
-    command_args.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    command_args.commandBufferCount = self->frames_inflight_count;
-
-    self->commands.resize( self->frames_inflight_count );
-    VkResult command_buffer_bad = vkAllocateCommandBuffers(
-        g_vulkan->logical_device, &command_args, g_vulkan->commands.data );
-    if (command_buffer_bad)
-    {
-        VULKAN_ERROR( "Failed to allocate command buffers" );
-        return false;
-    }
-    g_vulkan->resources.push_cleanup( [] {
-        vkFreeCommandBuffers(
-            g_vulkan->logical_device, g_vulkan->command_pool,
-            g_vulkan->frames_inflight_count, g_vulkan->commands.data
-        );
-    } );
-
     // Initialize test mesh data
     g_vulkan->test_triangle = mesh {
         .name = "test_triangle",
@@ -2730,28 +2730,29 @@ PROC vulkan_init() -> fresult
      * resources later on where it's relevant
      *
      * TODO: Need to figure out if we can use descriptor resources from 2
-     * different pools in the same shader */
-    // NOTE: Say which descriptor types we want
-    // HACK: Just grab an arbitrary 20 many descriptors for each
+     * different pools in the same shader
+     NOTE: Say which descriptor types we want
+     HACK: Just grab an arbitrary 2000 many descriptors for each since we need one for each draw call
+     And continiously allocate out of it */
     array<VkDescriptorPoolSize> descriptor_sizes {
         {
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
         },
         {
             .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
         },
         {
             .type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 20)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
         }
     };
 
     VkDescriptorPoolCreateInfo descriptor_pool_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0x0,
-        .maxSets = u32(g_vulkan->frames_inflight_count * 20),
+        .maxSets = u32(g_vulkan->frames_inflight_count * 2000),
         .poolSizeCount = descriptor_sizes.size(),
         .pPoolSizes = descriptor_sizes.data
     };
@@ -2822,10 +2823,10 @@ PROC vulkan_tick() -> void
 
     // New tick setup
 
-    vulkan_draw();
+    vulkan_prepare_frame();
 }
 
-PROC vulkan_draw() -> void
+PROC vulkan_prepare_frame() -> void
 {
     PROFILE_SCOPE_FUNCTION();
     if (g_vulkan == nullptr) { return; }
@@ -2867,13 +2868,10 @@ PROC vulkan_draw() -> void
 
            We have to wait for all for all frames to finish before we're allowed
            to regenerate the swapchain. */
-        vkWaitForFences(
-            g_vulkan->logical_device,
-            swapchain.frame_end_fences.size(),
-            swapchain.frame_end_fences.data,
-            true,
-            3'000'000'000
-        );
+        g_vulkan->frames_inflight.map_procedure( [](vulkan_frame& arg) {
+            vkWaitForFences(
+                g_vulkan->logical_device, 1, &arg.end_fence, true, 500'000'000 );
+        } );
         VkSwapchainKHR reuse_swapchain = g_vulkan->swapchain.platform_swapchain;
         vulkan_swapchain_destroy( &g_vulkan->swapchain );
         g_vulkan->swapchain.name = fmt::format( "version_{}", current_frame_i );
@@ -2902,7 +2900,9 @@ PROC vulkan_draw() -> void
         return;
     }
 
-    VkFence frame_end_fence = swapchain.frame_end_fences[ image_index ];
+    vulkan_frame* frame = g_vulkan->frames_inflight.address( image_index );
+    VkFence frame_end_fence = frame->end_fence;
+
     // Wait on 'frame_acquire_fence' before proceeding to reset the fence
     auto end_timeout = vkWaitForFences(
         g_vulkan->logical_device, 1, &frame_end_fence, true, 1'0000'000'000 );
@@ -2933,28 +2933,26 @@ PROC vulkan_draw() -> void
     }
     FrameMarkStart( "Vulkan Inflight Frame" );
 
-    VkCommandBuffer command_buffer = self->commands[ image_index ];
-    vkResetCommandBuffer( command_buffer, 0x0 );
-
     // -- Get started on new frame --
     TracyCZoneN( zone_setup_frame, "Vulkan Setup Frame", true );
     ++g_vulkan->frames_started;
 
     // SECTION: Set up some per frame data
-    vulkan_frame* current_frame = g_vulkan->frames_inflight.address( image_index );
     vulkan_pipeline* current_pipeline = &g_vulkan->ui_mesh_pipeline;
+
+    vkResetCommandBuffer( frame->command, 0x0 );
 
     /* NOTE: We can have multiple frames inflight so we need to copy a seperate
        draw queue for each frame */
-    current_frame->draw_queue_mesh.reset();
-    current_frame->draw_queue_image.reset();
-    current_frame->draw_queue_mesh = g_render->draw_queue_mesh;
-    current_frame->draw_queue_image = g_render->draw_queue_image;
+    frame->draw_queue_mesh.reset();
+    frame->draw_queue_image.reset();
+    frame->draw_queue_mesh = g_render->draw_queue_mesh;
+    frame->draw_queue_image = g_render->draw_queue_image;
 
-    current_frame->draw_index = current_frame_i;
-    current_frame->inflight_index = inflight_frame_i;
+    frame->draw_index = current_frame_i;
+    frame->inflight_index = inflight_frame_i;
     // TODO: Change this if we go back to a 3D pipeline, this was meant for UI rendering
-    current_frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
+    frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
                                      g_render->ui_camera.create_orthographic_projection());
 
     // SECTION: Iterate through the draw images and see if any need updating before drawing
@@ -2966,7 +2964,7 @@ PROC vulkan_draw() -> void
     }
 
     // Setup Uniform
-    frame_general_uniform* current_uniform = &current_frame->uniform;
+    frame_general_uniform* current_uniform = &frame->uniform;
     // current_uniform->epoch = tyon::g_program_epoch;
     current_uniform->time_since_epoch = time_elapsed_seconds();
 
@@ -2976,7 +2974,7 @@ PROC vulkan_draw() -> void
 
     auto uniform_queue_bad = vulkan_transfer_queue_buffer(
         &g_vulkan->transfer,
-        &current_frame->general_uniform_buffer,
+        &frame->general_uniform_buffer,
         sizeof(frame_general_uniform),
         0
     );
@@ -2985,39 +2983,14 @@ PROC vulkan_draw() -> void
         memory_copy<frame_general_uniform>( uniform_queue_bad.value.data, &uniform_copy, 1 );
     }
 
-    // Update the descriptor resource associated with the uniform
-    VkDescriptorBufferInfo resource_buffer_info {
-        .buffer = current_frame->general_uniform_buffer.buffer,
-        .offset = 0,
-        .range = VK_WHOLE_SIZE
-    };
-
-    VkWriteDescriptorSet resource_write_args {
-        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .pNext = nullptr,
-        .dstSet = current_frame->mesh_resource,
-        .dstBinding = 0,
-        .dstArrayElement = 0,
-        .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .pImageInfo = nullptr,
-        .pBufferInfo = &resource_buffer_info,
-        .pTexelBufferView = nullptr
-    };
-    TracyCZoneEnd( zone_setup_frame );
-
-    // Finalize the copy. No error return.
-    vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
-
-    // Start writing draw commands to command buffer
+    // SECTION: Start writing to command buffer
     VkCommandBufferBeginInfo begin_args {};
     begin_args.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_args.flags = 0; // Optional
     begin_args.pInheritanceInfo = nullptr; // Optional
     // Start recording commands into the command buffer
 
-    TracyCZoneN( zone_record_commands_frame, "Vulkan Frame Record Commands", true );
-    VkResult command_ok = vkBeginCommandBuffer( command_buffer, &begin_args );
+    VkResult command_ok = vkBeginCommandBuffer( frame->command, &begin_args );
 
     // -- Start recording into first subpass.--
     // This is started after beginning a command buffer.
@@ -3047,7 +3020,7 @@ PROC vulkan_draw() -> void
                 if (buffer_search.match_found)
                 {
                     vkCmdCopyBuffer(
-                        command_buffer,
+                        frame->command,
                         staging_buffer,
                         x_transfer->destination_buffer,
                         1,
@@ -3069,7 +3042,7 @@ PROC vulkan_draw() -> void
                         .size = copy_region.size
                     };
                     vkCmdPipelineBarrier(
-                        command_buffer,
+                        frame->command,
                         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
                         // VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT is depreceated aparently
                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
@@ -3087,10 +3060,10 @@ PROC vulkan_draw() -> void
             {
                 auto image_result = g_vulkan->images.linear_search(
                     [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
-                    return (arg_.id == image_id) && arg_.id.valid(); } );
+                        return (arg_.id == image_id) && arg_.id.valid(); } );
                 vulkan_image* vk_image = image_result.match;
                 if (vk_image == nullptr) { break; }
-                
+
                 v2_f32 image_size = vk_image->size;
                 VkBufferImageCopy copy_region {
                     .bufferOffset = static_cast<u64>(x_transfer->position),
@@ -3124,7 +3097,7 @@ PROC vulkan_draw() -> void
                     };
 
                     vkCmdPipelineBarrier(
-                        command_buffer,
+                        frame->command,
                         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
                         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -3134,7 +3107,7 @@ PROC vulkan_draw() -> void
                         1, &copy_barrier
                     );
                     vkCmdCopyBufferToImage(
-                        command_buffer,
+                        frame->command,
                         staging_buffer,
                         vk_image->platform_image,
                         vk_image->platform_layout,
@@ -3168,22 +3141,53 @@ PROC vulkan_draw() -> void
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
         arg.head_size = 0; });
 
+
+    // Update the descriptor resource associated with the uniform
+    VkDescriptorBufferInfo resource_buffer_info {
+        .buffer = frame->general_uniform_buffer.buffer,
+        .offset = 0,
+        .range = VK_WHOLE_SIZE
+    };
+
+    // VkWriteDescriptorSet resource_write_args {
+    //     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+    //     .pNext = nullptr,
+    //     .dstSet = frame->resources.,
+    //     .dstBinding = 0,
+    //     .dstArrayElement = 0,
+    //     .descriptorCount = 1,
+    //     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+    //     .pImageInfo = nullptr,
+    //     .pBufferInfo = &resource_buffer_info,
+    //     .pTexelBufferView = nullptr
+    // };
+    //     // Finalize the copy. No error return.
+    // vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+
+    TracyCZoneEnd( zone_setup_frame );
+}
+
+PROC vulkan_command_draw( vulkan_frame* frame ) -> void
+{
+    vulkan_pipeline* pipeline = &g_vulkan->mesh_pipeline;
+    vulkan_swapchain* swapchain = &g_vulkan->swapchain;
+
     // Set render pass start information
     VkClearValue clear_value {};
     clear_value.color = {{ 0.2f, 0.0f, 0.2f, 1.0f }};
     // VkClearValue clear_values[] = { clear_value, clear_value };
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    render_pass_args.renderPass = self->render_pass;
-    render_pass_args.framebuffer = self->swapchain_framebuffers[ image_index ];
+    render_pass_args.renderPass = g_vulkan->render_pass;
+    render_pass_args.framebuffer = g_vulkan->swapchain_framebuffers[ frame->inflight_index ];
     render_pass_args.renderArea.offset = {0, 0};
-    render_pass_args.renderArea.extent = swapchain.vk_present_size;
+    render_pass_args.renderArea.extent = g_vulkan->swapchain.vk_present_size;
     render_pass_args.clearValueCount = 1;
     render_pass_args.pClearValues = &clear_value;
-    vkCmdBeginRenderPass( command_buffer, &render_pass_args, VK_SUBPASS_CONTENTS_INLINE );
+    vkCmdBeginRenderPass( frame->command, &render_pass_args, VK_SUBPASS_CONTENTS_INLINE );
     // Must bind pipeline before using it
     vkCmdBindPipeline(
-        command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, current_pipeline->platform_pipeline );
+        frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_pipeline );
 
     bool resize_viewport = true;
     if (resize_viewport)
@@ -3194,8 +3198,8 @@ PROC vulkan_draw() -> void
             // Upper left coordinates
             .x = 0,
             .y = 0,
-            .width = float(swapchain.vk_present_size.width),
-            .height = float(swapchain.vk_present_size.height),
+            .width = float(swapchain->vk_present_size.width),
+            .height = float(swapchain->vk_present_size.height),
             // Configurable viewport depth, can configurable but usually between 0 and 1
             .minDepth = 0.0,
             .maxDepth = 1.0
@@ -3204,16 +3208,16 @@ PROC vulkan_draw() -> void
         // Only render into a certain portion of the viewport with scissors
         VkRect2D scissor_config {
             VkOffset2D { 0, 0 },
-            swapchain.vk_present_size
+            swapchain->vk_present_size
         };
-        vkCmdSetViewport( command_buffer, 0, 1, &viewport_config );
-        vkCmdSetScissor( command_buffer, 0, 1, &scissor_config );
+        vkCmdSetViewport( frame->command, 0, 1, &viewport_config );
+        vkCmdSetScissor( frame->command, 0, 1, &scissor_config );
     }
 
-    for (i32 i=0; i < current_frame->draw_queue_mesh.size(); ++i)
+    for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
     {
         // SECTION: Select mesh for drawing
-        mesh* draw_mesh = current_frame->draw_queue_mesh[i];
+        mesh* draw_mesh = frame->draw_queue_mesh[i];
 
         // Test Draw Meshes
         // draw_mesh = &g_vulkan->test_whale;
@@ -3252,18 +3256,18 @@ PROC vulkan_draw() -> void
          * buffer. NOT the buffer in a memory object. */
         VkDeviceSize offsets[] = { u64(0) };
         u32 n_buffers = 1;
-        vkCmdBindVertexBuffers( command_buffer, 0, n_buffers, vertex_buffers, offsets );
+        vkCmdBindVertexBuffers( frame->command, 0, n_buffers, vertex_buffers, offsets );
         u32 first_set_offset = 0;
         u32 resource_n = 1;
         const uint32_t* dynamic_offsets = nullptr;
         u32 dynamic_offsets_n = 0;
         vkCmdBindDescriptorSets(
-                                command_buffer,
+                                frame->command,
                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                current_pipeline->platform_layout,
+                                pipeline->platform_layout,
                                 first_set_offset,
                                 resource_n,
-                                &current_frame->mesh_resource,
+                                &frame->mesh_resource,
                                 dynamic_offsets_n,
                                 dynamic_offsets
                                 );
@@ -3272,8 +3276,8 @@ PROC vulkan_draw() -> void
         mesh_push.local_space = matrix_create_transform( draw_mesh->transform );
         mesh_push.debug_mode = g_vulkan->mesh_debug_mode;
         vkCmdPushConstants(
-                           command_buffer,
-                           current_pipeline->platform_layout,
+                           frame->command,
+                           pipeline->platform_layout,
                            VK_SHADER_STAGE_VERTEX_BIT,
                            0,
                            sizeof( vulkan_mesh_shader_push),
@@ -3288,7 +3292,7 @@ PROC vulkan_draw() -> void
             .first_instance = 0
         };
         vkCmdDraw(
-                  command_buffer,
+                  frame->command,
                   mesh_args.n_vertexes,
                   mesh_args.n_instances,
                   mesh_args.first_vertex,
@@ -3307,15 +3311,15 @@ PROC vulkan_draw() -> void
         .pWaitDstStageMask = wait_stages,
         // Just the one command buffer for now
         .commandBufferCount = 1,
-        .pCommandBuffers = &command_buffer,
+        .pCommandBuffers = &frame->command,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &self->queue_submit_semaphore,
+        .pSignalSemaphores = &g_vulkan->queue_submit_semaphore,
     };
 
     /* NOTE: Vulkan spec states that blitting cannot happen inside of an active render pass */
-    for (i32 i=0; i < current_frame->draw_queue_image.size(); ++i)
+    for (i32 i=0; i < frame->draw_queue_image.size(); ++i)
     {
-        render_image* draw_image = current_frame->draw_queue_image[i];
+        render_image* draw_image = frame->draw_queue_image[i];
         // Find the associated vulkan image
         auto image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg ) {
             return (arg.associated_image == draw_image->id) && arg.id.valid(); } );
@@ -3391,7 +3395,7 @@ PROC vulkan_draw() -> void
             };
 
             vkCmdPipelineBarrier(
-                command_buffer,
+                frame->command,
                 // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -3404,16 +3408,16 @@ PROC vulkan_draw() -> void
 
             // Update the image/texture
             // NOTE: Validation says it prefers descriptors to be updated before binding them
-            current_pipeline = &g_vulkan->ui_blit_pipeline;
+            pipeline = &g_vulkan->ui_blit_pipeline;
             VkDescriptorImageInfo image_info {
-                .sampler = current_pipeline->base_sampler,
+                .sampler = pipeline->base_sampler,
                 .imageView = vk_draw_image->platform_view,
                 .imageLayout = vk_draw_image->platform_layout
             };
             VkWriteDescriptorSet resource_write_args {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .pNext = nullptr,
-                .dstSet = current_frame->blit_resource,
+                .dstSet = frame->blit_resource,
                 .dstBinding = 1,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
@@ -3425,28 +3429,28 @@ PROC vulkan_draw() -> void
             vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
 
             vkCmdBindPipeline(
-                command_buffer,
+                frame->command,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                current_pipeline->platform_pipeline
+                pipeline->platform_pipeline
             );
             u32 first_set_offset = 0;
             u32 resource_n = 1;
             const uint32_t* dynamic_offsets = nullptr;
             u32 dynamic_offsets_n = 0;
             vkCmdBindDescriptorSets(
-                command_buffer,
+                frame->command,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                current_pipeline->platform_layout,
+                pipeline->platform_layout,
                 first_set_offset,
                 resource_n,
-                &current_frame->blit_resource,
+                &frame->blit_resource,
                 dynamic_offsets_n,
                 dynamic_offsets
             );
 
             /* Draw a triangle covering the entire screen and stretching outside the boundaries
                But generate the triangle directly in the shader */
-            vkCmdDraw( command_buffer, 3, 1, 0, 0 );
+            vkCmdDraw( frame->command, 3, 1, 0, 0 );
         }
     }
 
@@ -3461,33 +3465,32 @@ PROC vulkan_draw() -> void
     // );
 
     // VkResult sync_ok = vkWaitForFences(
-    //     self->logical_device,
+    //     g_vulkan->logical_device,
     //     1,
-    //     &self->frame_begin_fence,
+    //     &g_vulkan->frame_begin_fence,
     //     true,
     //     16'666'666
     // );
-    // vkResetFences( self->logical_device, 1, &self->frame_begin_fence );
-    vkCmdEndRenderPass( command_buffer );
-    vkEndCommandBuffer( command_buffer );
-    TracyCZoneEnd( zone_record_commands_frame );
+    // vkResetFences( g_vulkan->logical_device, 1, &g_vulkan->frame_begin_fence );
+    vkCmdEndRenderPass( frame->command );
+    vkEndCommandBuffer( frame->command );
 
     // if (sync_ok != VK_SUCCESS)
     // { TYON_ERROR( "Failed to wait on frame start fence for some reason" ); }
-    vkQueueSubmit( self->graphics_queue, 1, &submit_args, frame_end_fence );
+    vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame_end_fence );
 
-    VkSwapchainKHR present_swapchains[] = { self->swapchain.platform_swapchain };
+    VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };
     VkPresentInfoKHR present_args {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &self->queue_submit_semaphore,
+        .pWaitSemaphores = &g_vulkan->queue_submit_semaphore,
         .swapchainCount = 1,
         .pSwapchains = present_swapchains,
         .pImageIndices = &image_index,
         // This can be used for storing results from each individual swapchain
         .pResults = nullptr,
     };
-    VkResult present_bad = vkQueuePresentKHR( self->present_queue, &present_args );
+    VkResult present_bad = vkQueuePresentKHR( g_vulkan->present_queue, &present_args );
     if (present_bad)
     {   VULKAN_ERRORF( "Fatal error '{}' with drawing and presentation 'VkQueuePresent'",
                        string_VkResult(present_bad) );
@@ -3495,10 +3498,7 @@ PROC vulkan_draw() -> void
 
     // TODO: Remove because useless now?
     // auto frame_timeout = vkWaitForFences(
-    // self->logical_device, 1, &frame_end_fence, true, 1'000'000'000 );
-}
-
-
+    // g_vulkan->logical_device, 1, &frame_end_fence, true, 1'000'000'000 );
 }
 
 PROC format_as( VkResult arg ) -> tyon::fstring

@@ -51,7 +51,6 @@ struct vulkan_swapchain
     fstring name = "unnamed";
     VkSwapchainKHR platform_swapchain;
     VkFramebuffer platform_framebuffer;
-    array<VkFence> frame_end_fences;
     /** Vulkan dependant size of presentable surface, often close to window size.
     ultra pedantic about timing and exact size on most platforms. */
     VkExtent2D present_size;
@@ -278,6 +277,24 @@ struct vulkan_mesh_draw_args
     u32 first_instance = 0;
 };
 
+/** Manages many descriptor sets related to a pipeline*/
+struct vulkan_resources
+{
+    VkDescriptorSet platform_resources;
+    i32 sets_used {};
+    i32 set_count {};
+};
+
+/** Manages per-frame descriptor sets
+
+ This has to be it's own struct because we may have multiple types of descriptor
+ that each need a configurable pool of descriptors to pool out of. */
+struct vulkan_frame_resources
+{
+    uid pipeline;
+    array<vulkan_resources> resources;
+};
+
 struct vulkan_frame
 {
     // The index of the frame drawn since program start
@@ -286,13 +303,12 @@ struct vulkan_frame
     i32 inflight_index = -1;
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;
-    /* VkDeviceMemory general_uniform_memory; */
+    VkCommandBuffer command {};
+    VkFence end_fence {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
-    /* VkDescriptorPool descriptor_resource_pool; */
-    /** Mesh pipeline specific source */
-    VkDescriptorSet mesh_resource;
-    VkDescriptorSet blit_resource;
+    /** All resources */
+    vulkan_frame_resources resources;
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
 };
@@ -308,7 +324,6 @@ struct vulkan_context
     // Primary Window surface to draw to
     VkSurfaceKHR surface;
     VkCommandPool command_pool;
-    array<VkCommandBuffer> commands;
     /** Views describe how to interpret VkImage's, VkImages are related to
         textures and framebuffers */
     array<VkImageView> swapchain_image_views;
@@ -495,7 +510,11 @@ PROC vulkan_destroy() -> void;
 
 PROC vulkan_tick() -> void;
 
-PROC vulkan_draw() -> void;
+PROC vulkan_prepare_frame() -> void;
+
+PROC vulkan_command_setup( vulkan_frame* frame ) -> void;
+
+PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
 
 extern vulkan_context* g_vulkan;
 
