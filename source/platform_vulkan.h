@@ -277,9 +277,33 @@ struct vulkan_mesh_draw_args
     u32 first_instance = 0;
 };
 
+enum class e_vulkan_draw : i32
+{
+    none = 0,
+    any = 1,
+    mesh = 2,
+    image = 3
+};
+
+/** This structure insists that no referenced data changes after it's created */
+struct vulkan_draw_command
+{
+    /** What kind of draw command is requested */
+    e_vulkan_draw type = e_vulkan_draw::none;
+    vulkan_pipeline* pipeline;
+    // TODO: Testing to see if it makes sense to copy the handle
+    VkDescriptorSet platform_set;
+    i32 resource_index {};
+    /** Vulkan DescriptorSet index allocated out of vulkan_resources */
+    i32 set_index {};
+    vulkan_mesh* draw_mesh {};
+    vulkan_image* draw_image {};
+};
+
 /** Manages many descriptor sets related to a pipeline*/
 struct vulkan_resources
 {
+    uid pipeline;
     VkDescriptorSet platform_resources;
     i32 sets_used {};
     i32 set_count {};
@@ -291,7 +315,6 @@ struct vulkan_resources
  that each need a configurable pool of descriptors to pool out of. */
 struct vulkan_frame_resources
 {
-    uid pipeline;
     array<vulkan_resources> resources;
 };
 
@@ -311,6 +334,7 @@ struct vulkan_frame
     vulkan_frame_resources resources;
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
+     array< vulkan_draw_command > draw_command_queue;
 };
 
 struct vulkan_context
@@ -515,6 +539,10 @@ PROC vulkan_prepare_frame() -> void;
 PROC vulkan_command_setup( vulkan_frame* frame ) -> void;
 
 PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
+
+/** Allocate a new resource (descriptor set) just for this frame */
+PROC vulkan_draw_command_acquire_resource(
+    vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline ) -> fresult;
 
 extern vulkan_context* g_vulkan;
 
