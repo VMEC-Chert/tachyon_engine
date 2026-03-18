@@ -311,7 +311,8 @@ struct vulkan_draw_command
 struct vulkan_resources
 {
     uid pipeline;
-    VkDescriptorSet platform_resources;
+    VkDescriptorSet platform_resources {};
+    array<VkDescriptorSetLayout> set_layouts;
     i32 sets_used {};
     i32 set_count {};
 };
@@ -380,7 +381,6 @@ struct vulkan_context
     // Ungrouped threading primitives
     VkFence frame_begin_fence;
     VkFence frame_acquire_fence;
-    /* VkFence frame_end_fence; */
 
     VkSemaphore queue_submit_semaphore;
     VkSemaphore frame_end_semaphore;
@@ -541,7 +541,7 @@ PROC vulkan_destroy() -> void;
 
 PROC vulkan_tick() -> void;
 
-PROC vulkan_prepare_frame() -> void;
+PROC vulkan_start_frame() -> void;
 
 PROC vulkan_command_setup( vulkan_frame* frame ) -> void;
 

@@ -1737,21 +1737,31 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
     /** NOTE: We are going to allocate an arbitrary amount of descriptor sets, say 2,000,
      then start handing out descriptor sets to each individual draw call.
      NOTE: Descriptors cannot be updated mid render pass, so that's why we need 1 per draw call. */
+    vulkan_resources& mesh_resource = arg->resources.resources.push_tail({});
+    vulkan_resources& blit_resource = arg->resources.resources.push_tail({});
+
+    // NOTE: Need to set the layout individually for every descriptor so we need
+    // an array of descriptor layouts all pointing to te same layout...
+    mesh_resource.set_layouts.resize( 2000 );
+    blit_resource.set_layouts.resize( 2000 );
+    mesh_resource.set_layouts.map_procedure(
+        [layout = pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
+    blit_resource.set_layouts.map_procedure(
+        [layout = pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
+
     VkDescriptorSetAllocateInfo mesh_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pipeline->vk_resource_pool,
-        .descriptorSetCount = 2000,
-        .pSetLayouts = &g_vulkan->mesh_pipeline.platform_descriptor_layout
+        .descriptorSetCount = mesh_resource.set_layouts.size(),
+        .pSetLayouts = mesh_resource.set_layouts.data
     };
     VkDescriptorSetAllocateInfo blit_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = pipeline->vk_resource_pool,
-        .descriptorSetCount = 2000,
-        .pSetLayouts = &g_vulkan->ui_blit_pipeline.platform_descriptor_layout
+        .descriptorSetCount = blit_resource.set_layouts.size(),
+        .pSetLayouts = blit_resource.set_layouts.data
     };
 
-    vulkan_resources& mesh_resource = arg->resources.resources.push_tail({});
-    vulkan_resources& blit_resource = arg->resources.resources.push_tail({});
     VkResult mesh_resource_bad = vkAllocateDescriptorSets(
         g_vulkan->logical_device, &mesh_resource_args, &mesh_resource.platform_resources );
     VkResult blit_resource_bad = vkAllocateDescriptorSets(
@@ -1775,6 +1785,8 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresul
     VkResult fence_bad = vkCreateFence(
         g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &arg->end_fence );
     vulkan_label_object( (u64)arg->end_fence, VK_OBJECT_TYPE_FENCE, "frame_end_fence"  );
+    if (fence_bad)
+    {   VULKAN_ERROR( "Failed to create frame end fence" ); }
 
 
     arg->general_uniform_buffer = vulkan_buffer_create(
@@ -2689,8 +2701,8 @@ PROC vulkan_init() -> fresult
     array<VkAttachmentReference> input_attachment_refs {
         VkAttachmentReference {
             .attachment = 0,
-            // Can't read and write from the oOsame attachment
-            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            // Validation says layout should be undefined unless it is special
+            .layout = VK_IMAGE_LAYOUT_UNDEFINED
         }
     };
 
@@ -2739,22 +2751,22 @@ PROC vulkan_init() -> fresult
     array<VkDescriptorPoolSize> descriptor_sizes {
         {
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
         },
         {
             .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
         },
         {
             .type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
-            .descriptorCount = u32(g_vulkan->frames_inflight_count * 2000)
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
         }
     };
 
     VkDescriptorPoolCreateInfo descriptor_pool_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0x0,
-        .maxSets = u32(g_vulkan->frames_inflight_count * 2000),
+        .maxSets = u32(g_vulkan->frames_inflight_count * 8000),
         .poolSizeCount = descriptor_sizes.size(),
         .pPoolSizes = descriptor_sizes.data
     };
@@ -2824,11 +2836,10 @@ PROC vulkan_tick() -> void
     }
 
     // New tick setup
-
-    vulkan_prepare_frame();
+    vulkan_start_frame();
 }
 
-PROC vulkan_prepare_frame() -> void
+PROC vulkan_start_frame() -> void
 {
     PROFILE_SCOPE_FUNCTION();
     if (g_vulkan == nullptr) { return; }
@@ -3210,6 +3221,7 @@ PROC vulkan_prepare_frame() -> void
     }
 
     TracyCZoneEnd( zone_setup_frame );
+    vulkan_command_draw( frame );
 }
 
 PROC vulkan_command_draw( vulkan_frame* frame ) -> void
