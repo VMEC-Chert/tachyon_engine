@@ -37,7 +37,7 @@ PROC render_init( render_args* args ) -> void
 
     g_render = memory_allocate<render_context>( 1 );
     sdl = memory_allocate<platform_subsystem>(1);
-    *sdl = tyon::sdl_create_platform_subsystem();
+    *sdl = sdl_create_platform_subsystem();
 
     g_render->args = *args;
 

@@ -249,6 +249,13 @@ struct vulkan_buffer
 struct vulkan_mesh
 {
     uid id;
+    ftransform transform;
+    // Number of faces
+    i32 faces_n = 0;
+    // Number of vertecies
+    i32 vertexes_n = 0;
+    // Number of vertex indices
+    i32 vertex_indexes_n = 0;
     vulkan_buffer vertex_buffer;
     vulkan_buffer vertex_indexes_buffer;
     vulkan_buffer color_buffer;
@@ -322,7 +329,7 @@ struct vulkan_frame
 {
     // The index of the frame drawn since program start
     i64 draw_index = -1;
-    // Provided by vkAcquireNextImageKHR
+    /** Provided by vkAcquireNextImageKHR */
     i32 inflight_index = -1;
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;

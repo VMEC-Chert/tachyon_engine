@@ -3259,92 +3259,76 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         vkCmdSetScissor( frame->command, 0, 1, &scissor_config );
     }
 
-    for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
+    i32 i_limit = frame->draw_command_queue.size();
+    for (i32 i=0; i < i_limit; ++i)
     {
-        // SECTION: Select mesh for drawing
-        mesh* draw_mesh = frame->draw_queue_mesh[i];
-
-        // Test Draw Meshes
-        // draw_mesh = &g_vulkan->test_whale;
-        // draw_mesh = &g_vulkan->test_teapot;
-        // draw_mesh = &g_vulkan->test_ui_triangle;
-
-        // make test UI meshes resize with window for convenience
-        g_vulkan->test_ui_triangle.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
-        g_vulkan->test_ui_square.transform.scale = (v3{0.7} * g_render->ui_camera.sensor_size.y);
-        g_vulkan->test_teapot.transform.scale = (v3{40});
-        g_vulkan->test_teapot.transform.rotation.z = 6.28 * 0.25;
-
-        // Find the associated vulkan mesh
-        auto mesh_result = g_vulkan->meshes.linear_search( [draw_mesh]( vulkan_mesh& arg ) {
-            return arg.id == draw_mesh->id && arg.id.valid(); } );
-        vulkan_mesh* vk_draw_mesh = nullptr;
-        bool no_vulkan_mesh = (draw_mesh->id.valid() && mesh_result.match_found == false);
-        if (no_vulkan_mesh)
+        vulkan_draw_command* draw_command = frame->draw_command_queue.address(i);
+        switch (draw_command->type)
         {
-            // Recreate and search again
-            vulkan_mesh_init( draw_mesh );
-            mesh_result = g_vulkan->meshes.linear_search( [=]( vulkan_mesh& arg ) {
-                return arg.id == draw_mesh->id && arg.id.valid(); } );
+            case e_vulkan_draw::mesh:
+            {
+                /* SECTION: Select mesh for drawing
+
+                   NOTE: This section used to read from the original render mesh
+                   but now it only deals with Vulkan meshes
+
+                   NOTE: That also meant searching for the Vulkan mesh but we no
+                   longer need to do that since we're baking that into the draw
+                   command */
+                vulkan_mesh* vk_draw_mesh = draw_command->draw_mesh;
+
+                // Bind vertex/ data to pipeline data slots
+                VkBuffer vertex_buffers[] = { vk_draw_mesh->vertex_buffer.buffer };
+                /** NOTE: This is the offset for the binding being described by the
+                 * buffer. NOT the buffer in a memory object. */
+                VkDeviceSize offsets[] = { u64(0) };
+                u32 n_buffers = 1;
+                vkCmdBindVertexBuffers( frame->command, 0, n_buffers, vertex_buffers, offsets );
+                u32 set_offset = draw_command->set_index;
+                u32 set_n = 1;
+                VkDescriptorSet set = draw_command->platform_set;
+                const uint32_t* dynamic_offsets = nullptr;
+                u32 dynamic_offsets_n = 0;
+                vkCmdBindDescriptorSets(
+                    frame->command,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pipeline->platform_layout,
+                    set_offset,
+                    set_n,
+                    &set,
+                    dynamic_offsets_n,
+                    dynamic_offsets
+                );
+                // Pass push constants with basic mesh data
+                vulkan_mesh_shader_push mesh_push;
+                mesh_push.local_space = matrix_create_transform( vk_draw_mesh->transform );
+                mesh_push.debug_mode = g_vulkan->mesh_debug_mode;
+                vkCmdPushConstants(
+                    frame->command,
+                    pipeline->platform_layout,
+                    VK_SHADER_STAGE_VERTEX_BIT,
+                    0,
+                    sizeof( vulkan_mesh_shader_push),
+                    &mesh_push
+                );
+
+                // Draw an actual mesh
+                auto mesh_args = vulkan_mesh_draw_args {
+                    .n_vertexes = u32(vk_draw_mesh->vertexes_n),
+                    .n_instances = 1,
+                    .first_vertex = 0,
+                    .first_instance = 0
+                };
+                vkCmdDraw(
+                    frame->command,
+                    mesh_args.n_vertexes,
+                    mesh_args.n_instances,
+                    mesh_args.first_vertex,
+                    mesh_args.first_instance
+                );
+            }
+            default: break;
         }
-        // NOTE: Pointer copy covers both no_vulkan_mesh search and first search
-        vk_draw_mesh = mesh_result.match;
-        if (mesh_result.match_found == false)
-        {
-            VULKAN_ERROR( "We tried to draw a mesh with no associated Vulkan data" );
-            continue;
-        }
-
-
-        // Bind vertex/ data to pipeline data slots
-        VkBuffer vertex_buffers[] = { vk_draw_mesh->vertex_buffer.buffer };
-        /** NOTE: This is the offset for the binding being described by the
-         * buffer. NOT the buffer in a memory object. */
-        VkDeviceSize offsets[] = { u64(0) };
-        u32 n_buffers = 1;
-        vkCmdBindVertexBuffers( frame->command, 0, n_buffers, vertex_buffers, offsets );
-        u32 set_offset = draw_comand->set_index;
-        u32 set_n = 1;
-        VkDescriptorSet set = draw_command->platform_set;
-        const uint32_t* dynamic_offsets = nullptr;
-        u32 dynamic_offsets_n = 0;
-        vkCmdBindDescriptorSets(
-            frame->command,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            pipeline->platform_layout,
-            set_offset,
-            set_n,
-            &set,
-            dynamic_offsets_n,
-            dynamic_offsets
-        );
-        // Pass push constants with basic mesh data
-        vulkan_mesh_shader_push mesh_push;
-        mesh_push.local_space = matrix_create_transform( draw_mesh->transform );
-        mesh_push.debug_mode = g_vulkan->mesh_debug_mode;
-        vkCmdPushConstants(
-                           frame->command,
-                           pipeline->platform_layout,
-                           VK_SHADER_STAGE_VERTEX_BIT,
-                           0,
-                           sizeof( vulkan_mesh_shader_push),
-                           &mesh_push
-                           );
-
-        // Draw an actual mesh
-        auto mesh_args = vulkan_mesh_draw_args {
-            .n_vertexes = u32(draw_mesh->vertexes_n),
-            .n_instances = 1,
-            .first_vertex = 0,
-            .first_instance = 0
-        };
-        vkCmdDraw(
-                  frame->command,
-                  mesh_args.n_vertexes,
-                  mesh_args.n_instances,
-                  mesh_args.first_vertex,
-                  mesh_args.first_instance
-                  );
     }
 
     VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
@@ -3455,25 +3439,25 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 
             // Update the image/texture
             // NOTE: Validation says it prefers descriptors to be updated before binding them
-            pipeline = &g_vulkan->ui_blit_pipeline;
-            VkDescriptorImageInfo image_info {
-                .sampler = pipeline->base_sampler,
-                .imageView = vk_draw_image->platform_view,
-                .imageLayout = vk_draw_image->platform_layout
-            };
-            VkWriteDescriptorSet resource_write_args {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .pNext = nullptr,
-                .dstSet = frame->blit_resource,
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .pImageInfo = &image_info,
-                .pBufferInfo = nullptr,
-                .pTexelBufferView = nullptr
-            };
-            vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+            // pipeline = &g_vulkan->ui_blit_pipeline;
+            // VkDescriptorImageInfo image_info {
+            //     .sampler = pipeline->base_sampler,
+            //     .imageView = vk_draw_image->platform_view,
+            //     .imageLayout = vk_draw_image->platform_layout
+            // };
+            // VkWriteDescriptorSet resource_write_args {
+            //     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            //     .pNext = nullptr,
+            //     .dstSet = frame->blit_resource,
+            //     .dstBinding = 1,
+            //     .dstArrayElement = 0,
+            //     .descriptorCount = 1,
+            //     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            //     .pImageInfo = &image_info,
+            //     .pBufferInfo = nullptr,
+            //     .pTexelBufferView = nullptr
+            // };
+            // vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
 
             vkCmdBindPipeline(
                 frame->command,
@@ -3484,16 +3468,16 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
             u32 resource_n = 1;
             const uint32_t* dynamic_offsets = nullptr;
             u32 dynamic_offsets_n = 0;
-            vkCmdBindDescriptorSets(
-                frame->command,
-                VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipeline->platform_layout,
-                first_set_offset,
-                resource_n,
-                &frame->blit_resource,
-                dynamic_offsets_n,
-                dynamic_offsets
-            );
+            // vkCmdBindDescriptorSets(
+            //     frame->command,
+            //     VK_PIPELINE_BIND_POINT_GRAPHICS,
+            //     pipeline->platform_layout,
+            //     first_set_offset,
+            //     resource_n,
+            //     &frame->blit_resource,
+            //     dynamic_offsets_n,
+            //     dynamic_offsets
+            // );
 
             /* Draw a triangle covering the entire screen and stretching outside the boundaries
                But generate the triangle directly in the shader */
@@ -3524,16 +3508,17 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 
     // if (sync_ok != VK_SUCCESS)
     // { TYON_ERROR( "Failed to wait on frame start fence for some reason" ); }
-    vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame_end_fence );
+    vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame->end_fence );
 
     VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };
+    u32 image_indexes = frame->inflight_index;
     VkPresentInfoKHR present_args {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &g_vulkan->queue_submit_semaphore,
         .swapchainCount = 1,
         .pSwapchains = present_swapchains,
-        .pImageIndices = &image_index,
+        .pImageIndices = &image_indexes,
         // This can be used for storing results from each individual swapchain
         .pResults = nullptr,
     };
@@ -3553,7 +3538,7 @@ PROC vulkan_draw_command_acquire_resource(
 {
     auto resources_search = frame->resources.resources.linear_search(
         [pipeline_id = pipeline->id](auto& resources) {
-            return (resources.id == pipeline_id) && resources.sets_used < resources.set_count; });
+            return (resources.pipeline == pipeline_id) && resources.sets_used < resources.set_count; });
     if (resources_search.match_found == false)
     {   return false; }
     // TODO: Try allocate a new batch of resources first
@@ -3561,9 +3546,11 @@ PROC vulkan_draw_command_acquire_resource(
     // Found resource
     arg->resource_index = resources_search.index;
     // allocate 1 descriptor set from the resources
-    are->set_index = resources_search.match->sets_used;
-    ++resoruces_search.match->sets_used;
+    arg->set_index = resources_search.match->sets_used;
+    ++resources_search.match->sets_used;
     return true;
+}
+
 }
 
 PROC format_as( VkResult arg ) -> tyon::fstring
