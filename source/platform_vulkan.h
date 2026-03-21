@@ -70,7 +70,6 @@ struct vulkan_pipeline
 
     VkPipeline platform_pipeline {};
     VkPipelineLayout platform_layout {};
-    VkDescriptorPool vk_resource_pool {};
     VkDescriptorSetLayout platform_descriptor_layout {};
     VkRenderPass platform_render_pass {};
     VkSampler base_sampler {};
@@ -311,7 +310,7 @@ struct vulkan_draw_command
 struct vulkan_resources
 {
     uid pipeline;
-    VkDescriptorSet platform_resources {};
+    array<VkDescriptorSet> sets;
     array<VkDescriptorSetLayout> set_layouts;
     i32 sets_used {};
     i32 set_count {};
@@ -342,7 +341,7 @@ struct vulkan_frame
     vulkan_frame_resources resources;
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
-     array< vulkan_draw_command > draw_command_queue;
+    array< vulkan_draw_command > draw_queue_command;
 };
 
 struct vulkan_context

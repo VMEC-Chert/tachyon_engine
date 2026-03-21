@@ -49,7 +49,7 @@ auto  VKAPI_CALL vulkan_debug_callback(
             TYON_BASE_LOGF( category, "[Warning] {}", callback_data->pMessage );
             break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
-            TYON_BASE_ERRORF( category, "{}", callback_data->pMessage );
+            TYON_BASE_ERRORF( category, "[Error] {}", callback_data->pMessage );
             if (global->debugger_mode)
             {   TYON_BREAK();
             }
@@ -1731,48 +1731,54 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     return suballocate_ok;
 }
 
-PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* pipeline ) -> fresult
+PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
     /** NOTE: We are going to allocate an arbitrary amount of descriptor sets, say 2,000,
      then start handing out descriptor sets to each individual draw call.
      NOTE: Descriptors cannot be updated mid render pass, so that's why we need 1 per draw call. */
+    arg->resources.resources.change_allocation( 10 );
     vulkan_resources& mesh_resource = arg->resources.resources.push_tail({});
     vulkan_resources& blit_resource = arg->resources.resources.push_tail({});
+    vulkan_pipeline* mesh_pipeline = &g_vulkan->ui_mesh_pipeline;
+    vulkan_pipeline* blit_pipeline = &g_vulkan->ui_blit_pipeline;
 
     // NOTE: Need to set the layout individually for every descriptor so we need
     // an array of descriptor layouts all pointing to te same layout...
+    mesh_resource.sets.resize( 2000 );
     mesh_resource.set_layouts.resize( 2000 );
+    blit_resource.sets.resize( 2000 );
     blit_resource.set_layouts.resize( 2000 );
+
     mesh_resource.set_layouts.map_procedure(
-        [layout = pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
+        [layout = mesh_pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
     blit_resource.set_layouts.map_procedure(
-        [layout = pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
+        [layout = blit_pipeline->platform_descriptor_layout]( auto& arg ) { arg = layout; } );
 
     VkDescriptorSetAllocateInfo mesh_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pipeline->vk_resource_pool,
+        .descriptorPool = g_vulkan->common_resource_pool,
         .descriptorSetCount = mesh_resource.set_layouts.size(),
         .pSetLayouts = mesh_resource.set_layouts.data
     };
     VkDescriptorSetAllocateInfo blit_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = pipeline->vk_resource_pool,
+        .descriptorPool = g_vulkan->common_resource_pool,
         .descriptorSetCount = blit_resource.set_layouts.size(),
         .pSetLayouts = blit_resource.set_layouts.data
     };
 
     VkResult mesh_resource_bad = vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &mesh_resource_args, &mesh_resource.platform_resources );
+        g_vulkan->logical_device, &mesh_resource_args, mesh_resource.sets.data.data );
     VkResult blit_resource_bad = vkAllocateDescriptorSets(
-        g_vulkan->logical_device, &blit_resource_args, &blit_resource.platform_resources );
+        g_vulkan->logical_device, &blit_resource_args, blit_resource.sets.data.data );
     if (mesh_resource_bad || blit_resource_bad)
     {   VULKAN_ERRORF( "Failed to create descriptor sets {} {}", mesh_resource_bad, blit_resource_bad );
         return false;
     }
-    mesh_resource.pipeline = pipeline->id;
+    mesh_resource.pipeline = mesh_pipeline->id;
     mesh_resource.set_count = mesh_resource_args.descriptorSetCount;
-    blit_resource.pipeline = pipeline->id;
+    blit_resource.pipeline = blit_pipeline->id;
     blit_resource.set_count = blit_resource_args.descriptorSetCount;
 
     // SECTION: Make synchronization primitives
@@ -2047,7 +2053,7 @@ PROC vulkan_transfer_queue_image(
     return result;
 }
 
-PROC vulkan_image_prepare( render_image* arg ) -> fresult
+PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
 {
     render_image* current_image = arg;
 
@@ -2092,6 +2098,14 @@ PROC vulkan_image_prepare( render_image* arg ) -> fresult
                 vk_draw_image->update_timestamp = time_now_ns();
             }
         }
+
+        // Can start building a new draw command
+        vulkan_draw_command* draw_command = &frame->draw_queue_command.push_tail({});
+        draw_command->type = e_vulkan_draw::image;
+        draw_command->pipeline = &g_vulkan->ui_blit_pipeline;
+        draw_command->set_index = vulkan_draw_command_acquire_resource(
+            draw_command, frame, draw_command->pipeline );
+        draw_command->draw_image = vk_draw_image;
     }
     return true;
 }
@@ -2699,17 +2713,18 @@ PROC vulkan_init() -> fresult
         },
     };
     array<VkAttachmentReference> input_attachment_refs {
-        VkAttachmentReference {
-            .attachment = 0,
-            // Validation says layout should be undefined unless it is special
-            .layout = VK_IMAGE_LAYOUT_UNDEFINED
-        }
+        // NOTE: This was when testing image compositing I don't think we need this anymore
+        // VkAttachmentReference {
+        //     .attachment = 0,
+        //     // Validation says layout should be undefined unless it is special
+        //     .layout = VK_IMAGE_LAYOUT_UNDEFINED
+        // }
     };
 
     // sub-pass first
     VkSubpassDescription sub_pass {};
-    sub_pass.pInputAttachments = input_attachment_refs.data;
-    sub_pass.inputAttachmentCount = input_attachment_refs.size();
+    sub_pass.pInputAttachments = nullptr;
+    sub_pass.inputAttachmentCount = 0;
     sub_pass.pColorAttachments = color_attachment_refs.data;
     sub_pass.colorAttachmentCount = color_attachment_refs.size();
 
@@ -2792,7 +2807,7 @@ PROC vulkan_init() -> fresult
 
 
     // Create primary generic pipeline
-    g_vulkan->mesh_pipeline.vk_resource_pool = frame_descriptor_pool;
+    g_vulkan->common_resource_pool = frame_descriptor_pool;
     vulkan_init_pipelines();
 
     /* Create per-frame data, we may have more than one frame going at once and per-frame resources
@@ -2957,6 +2972,7 @@ PROC vulkan_start_frame() -> void
 
     /* NOTE: We can have multiple frames inflight so we need to copy a seperate
        draw queue for each frame */
+    frame->draw_queue_command.reset();
     frame->draw_queue_mesh.reset();
     frame->draw_queue_image.reset();
     frame->draw_queue_mesh = g_render->draw_queue_mesh;
@@ -2973,7 +2989,7 @@ PROC vulkan_start_frame() -> void
     for (i32 i=0; i < g_render->draw_queue_image.size(); ++i)
     {
         render_image* current_image = g_render->draw_queue_image[i];
-        vulkan_image_prepare( current_image );
+        vulkan_image_prepare( current_image, frame );
     }
 
     // Setup Uniform
@@ -3172,7 +3188,7 @@ PROC vulkan_start_frame() -> void
         }
 
         // Got a valid vulkan mesh, can start building a new draw command
-        draw_command = &frame->draw_command_queue.push_tail({});
+        draw_command = &frame->draw_queue_command.push_tail({});
         draw_command->type = e_vulkan_draw::mesh;
         // TODO: Needs to change when we have multiple pipelines per mesh
         draw_command->pipeline = &g_vulkan->ui_mesh_pipeline;
@@ -3201,10 +3217,11 @@ PROC vulkan_start_frame() -> void
                 .range = VK_WHOLE_SIZE
             };
 
+;
             VkWriteDescriptorSet resource_write_args {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .pNext = nullptr,
-                .dstSet = frame->resources.resources[ draw_command->resource_index ].platform_resources,
+                .dstSet = resources->sets[ draw_command->set_index ],
                 .dstBinding = 0,
                 // NOTE: I think this is start index in the list of descriptors to use
                 .dstArrayElement = u32(maximum<i32>( 0, draw_command->set_index )),
@@ -3271,12 +3288,14 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         vkCmdSetScissor( frame->command, 0, 1, &scissor_config );
     }
 
-    i32 i_limit = frame->draw_command_queue.size();
+    i32 i_limit = frame->draw_queue_command.size();
     for (i32 i=0; i < i_limit; ++i)
     {
-        vulkan_draw_command* draw_command = frame->draw_command_queue.address(i);
+        vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
         switch (draw_command->type)
         {
+            case e_vulkan_draw::none: VULKAN_ERROR( "Passed draw command with 'none' type" );
+            case e_vulkan_draw::any: VULKAN_ERROR( "Passed draw command with 'any' type" );
             case e_vulkan_draw::mesh:
             {
                 /* SECTION: Select mesh for drawing
@@ -3296,21 +3315,14 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 VkDeviceSize offsets[] = { u64(0) };
                 u32 n_buffers = 1;
                 vkCmdBindVertexBuffers( frame->command, 0, n_buffers, vertex_buffers, offsets );
-                u32 set_offset = draw_command->set_index;
+                u32 set_offset = 0;
                 u32 set_n = 1;
                 VkDescriptorSet set = draw_command->platform_set;
                 const uint32_t* dynamic_offsets = nullptr;
                 u32 dynamic_offsets_n = 0;
                 vkCmdBindDescriptorSets(
-                    frame->command,
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    pipeline->platform_layout,
-                    set_offset,
-                    set_n,
-                    &set,
-                    dynamic_offsets_n,
-                    dynamic_offsets
-                );
+                    frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_layout,
+                    set_offset, set_n, &set, dynamic_offsets_n, dynamic_offsets );
                 // Pass push constants with basic mesh data
                 vulkan_mesh_shader_push mesh_push;
                 mesh_push.local_space = matrix_create_transform( vk_draw_mesh->transform );
@@ -3332,12 +3344,39 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                     .first_instance = 0
                 };
                 vkCmdDraw(
+                    frame->command, mesh_args.n_vertexes, mesh_args.n_instances, mesh_args.first_vertex,
+                    mesh_args.first_instance );
+            }
+            case e_vulkan_draw::image:
+            {
+                vulkan_image* draw_image = draw_command->draw_image;
+
+                // Bind correct pipeline first
+                vkCmdBindPipeline(
                     frame->command,
-                    mesh_args.n_vertexes,
-                    mesh_args.n_instances,
-                    mesh_args.first_vertex,
-                    mesh_args.first_instance
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    draw_command->pipeline->platform_pipeline
                 );
+
+                /* Draw a triangle covering the entire screen and stretching outside the boundaries
+                   But generate the triangle directly in the shader
+                   NOTE: Bind a bogus buffer first since we don't actually need any vertex data */
+                u32 set_offset = 0;
+                u32 set_n = 1;
+                VkDescriptorSet set = draw_command->platform_set;
+                const uint32_t* dynamic_offsets = nullptr;
+                u32 dynamic_offsets_n = 0;
+                vkCmdBindDescriptorSets(
+                    frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_layout,
+                    set_offset, set_n, &set, dynamic_offsets_n, dynamic_offsets );
+
+                ERROR_GUARD( g_vulkan->meshes.head_size >= 1,
+                             "We're supposed to have 1 valid mesh by now" );
+                VkDeviceSize offsets[] = { u64(0) };
+                u32 n_buffers = 1;
+                VkBuffer& stub_buffer = g_vulkan->meshes[0].vertex_buffer.buffer;
+                vkCmdBindVertexBuffers( frame->command, 0, n_buffers, &stub_buffer, offsets );
+                vkCmdDraw( frame->command, 3, 1, 0, 0 );
             }
             default: break;
         }
@@ -3404,6 +3443,8 @@ PROC vulkan_draw_command_acquire_resource(
     // allocate 1 descriptor set from the resources
     arg->set_index = resources_search.match->sets_used;
     ++resources_search.match->sets_used;
+    // Copy descriptor set for convenience
+    arg->platform_set = resources_search.match->sets[ arg->set_index ];
     return true;
 }
 

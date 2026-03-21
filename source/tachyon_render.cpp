@@ -74,6 +74,14 @@ PROC render_init( render_args* args ) -> void
         {   TYON_ERROR( "window_platform specified on command line does not match known platform" );
         }
     }
+
+    // TODO: Temporary location
+    auto debugger_search = g_library->cmdline_arguments.linear_search(
+        []( cmdline_argument& arg ) {
+        return arg.name == "debugger_mode"; });
+    if (debugger_search.match_found)
+    {   global->debugger_mode = true; }
+
     // SDL needs to setup after the render context but before vulkan init
     sdl->init();
 
