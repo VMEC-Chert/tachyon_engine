@@ -170,9 +170,9 @@ PROC mesh_init( mesh* arg ) -> fresult
     }
 
     arg->id = uuid_generate();
-    arg->faces_n = arg->vertexes.size() / 3;
-    arg->vertexes_n = arg->vertexes.size();
-    arg->vertex_indexes_n = arg->vertex_indexes.size();
+    arg->faces_n = limit<i32>( arg->vertexes.size() / 3 );
+    arg->vertexes_n = limit<i32>( arg->vertexes.size() );
+    arg->vertex_indexes_n = limit<i32>( arg->vertex_indexes.size() );
 
     TYON_LOG( "Created mesh: ")
     TYON_LOGF( "    ID: {}", arg->id );
@@ -196,12 +196,12 @@ PROC mesh_bounding_box_2d( mesh* arg ) -> box_2d
     f32 left = 0.0;
     f32 right = 0.0;
     // TODO: hardcoded for screen camera coordinates
-    arg->vertexes.map_procedure( [&] (v3 arg) {
+    arg->vertexes.map_procedure( [&] (v3 a1) {
         // Iterate over and find the furthest extents of the mesh
-        right = (arg.y > right ? arg.y : right);
-        left  = (arg.y < left  ? arg.y : left);
-        up    = (arg.z < up    ? arg.z : up);
-        down  = (arg.z > down  ? arg.z : down);
+        right = (a1.y > right ? a1.y : right);
+        left  = (a1.y < left  ? a1.y : left);
+        up    = (a1.z < up    ? a1.z : up);
+        down  = (a1.z > down  ? a1.z : down);
     } );
     f32 left_right_distance = (up - down);
     f32 up_down_distance = (left - down);
@@ -223,11 +223,11 @@ matrix scene_camera::create_perspective_projection()
     // Far
     f32 f = this->far_clip;
     // Right
-    f32 r = -(camera_width / 2.0) / aspect_ratio_vh;
+    f32 r = -(camera_width / 2.0f) / aspect_ratio_vh;
     // Left
     f32 l = -r;
     // Top
-    f32 t = (camera_width / 2.0);
+    f32 t = (camera_width / 2.0f);
     // Bottom
     f32 b = -t;
 
@@ -251,11 +251,11 @@ PROC scene_camera::create_orthographic_projection() -> matrix
     // Far
     f32 f = this->far_clip;
     // Right - NOTE: aspect divide doesn't seem to be nessesary
-    f32 r = (sensor_size.x / 2.0);
+    f32 r = (sensor_size.x / 2.0f);
     // Left
     f32 l = -r;
     // Top
-    f32 t = (sensor_size.y / 2.0);
+    f32 t = (sensor_size.y / 2.0f);
     // Bottom
     f32 b = -t;
 

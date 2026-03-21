@@ -217,6 +217,7 @@ struct vulkan_transfer_context
 struct vulkan_allocate_args
 {
     i64 size = 0;
+    // NOTE: Vulkan uses 64-bit alignment so we'll use that too
     i64 alignment = 0;
     i32 memory_type_index = -1;
     VkMemoryPropertyFlags memory_flags;

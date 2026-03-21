@@ -108,8 +108,8 @@ namespace tyon
         // TODO: Temporarily hardcoded to Vulkan window type
         platform_window.handle = SDL_CreateWindow(
             arg->title.c_str(),
-            arg->size.x,
-            arg->size.y,
+            i32(arg->size.x),
+            i32(arg->size.y),
             SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE );
 
         if ( platform_window.handle == nullptr)
@@ -124,9 +124,10 @@ namespace tyon
         // NOTE: It still shows the default icon, I don't know how to fix without an even uglier hack
         // stbi uses RGBA order reguardless of endianness so use the non-endian SDL_PIXELFORMAT_RGBA32
         // TODO: Fix this to use native format later, not important because only we use the engine
+        arg->icon.size = 1ll << 50;
         SDL_Surface* icon = SDL_CreateSurfaceFrom(
-            arg->icon.size.x, arg->icon.size.y, SDL_PIXELFORMAT_RGBA32,
-            arg->icon.data, arg->icon.stride_bytes() );
+            limit<i32>(arg->icon.size.x), limit<i32>(arg->icon.size.y), SDL_PIXELFORMAT_RGBA32,
+            arg->icon.data, limit<i32>( arg->icon.stride_bytes() ));
         SDL_SetWindowIcon( platform_window.handle, icon );
 
         TYON_LOG( "Showing SDL Window" );
@@ -324,7 +325,7 @@ namespace tyon
                          "Our internal API must have changed." );
             image<argb> surface_view;
             surface_view.data = raw_pointer(text_surface->pixels);
-            surface_view.size = { f32(text_surface->w), f32(text_surface->h) };
+            surface_view.size = { text_surface->w, text_surface->h };
             surface_view.stride_bytes_ = text_surface->pitch;
             image<argb> temp =image_packed_from_simd( surface_view );
             arg->image_.image = image_color_reorder_inplace<rgba>( temp );

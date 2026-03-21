@@ -332,9 +332,9 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
     VkPipelineVertexInputStateCreateInfo vertex_args {};
     vertex_args.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_args.pVertexBindingDescriptions =  bindings.data;
-    vertex_args.vertexBindingDescriptionCount = bindings.size();
+    vertex_args.vertexBindingDescriptionCount = clamp_u32( bindings.size() );
     vertex_args.pVertexAttributeDescriptions = vertex_attributes.data;
-    vertex_args.vertexAttributeDescriptionCount = vertex_attributes.size();
+    vertex_args.vertexAttributeDescriptionCount = clamp_u32( vertex_attributes.size() );
 
     // Mesh rendering settings
     VkPipelineInputAssemblyStateCreateInfo input_args {};
@@ -610,9 +610,9 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     VkPipelineVertexInputStateCreateInfo vertex_args {};
     vertex_args.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_args.pVertexBindingDescriptions =  bindings.data;
-    vertex_args.vertexBindingDescriptionCount = bindings.size();
+    vertex_args.vertexBindingDescriptionCount = clamp_u32( bindings.size() );
     vertex_args.pVertexAttributeDescriptions = vertex_attributes.data;
-    vertex_args.vertexAttributeDescriptionCount = vertex_attributes.size();
+    vertex_args.vertexAttributeDescriptionCount = clamp_u32( vertex_attributes.size() );
 
     // Mesh rendering settings
     VkPipelineInputAssemblyStateCreateInfo input_args {};
@@ -966,12 +966,16 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
         g_vulkan->device, g_vulkan->surface, &surface_capabilities_2 );
 
     array<VkImage>& swapchain_images = g_vulkan->swapchain_images;
-    u32 n_swapchain_images = 0;
+    u32 n_swapchain_images_ = 0;
+    i32 n_swapchain_images = 0;
     vkGetSwapchainImagesKHR( g_vulkan->logical_device, arg->platform_swapchain,
-                             &n_swapchain_images, nullptr );
+                             &n_swapchain_images_, nullptr );
+    n_swapchain_images = clamp_i32( n_swapchain_images_ );
+
     swapchain_images.resize( n_swapchain_images );
     vkGetSwapchainImagesKHR( g_vulkan->logical_device, arg->platform_swapchain,
-                             &n_swapchain_images, swapchain_images.data );
+                             &n_swapchain_images_, swapchain_images.data );
+
 
 /** Views describe how to interpret VkImage's, VkImages are related to
     textures and framebuffers */
@@ -1131,7 +1135,8 @@ PROC vulkan_memory_find_best_type_index(
     std::bitset<32> best_flag = ~u32(0);
     /** If the current memory type being used an exact match of preferred flags */
     i32 x_missing_flag_n = 32;
-    for (i32 i=0; i < memory_props.memoryTypeCount; ++i)
+    i32 i_limit = limit<i32>( memory_props.memoryTypeCount);
+    for (i32 i=0; i < i_limit; ++i)
     {
         VkMemoryType x_memory_type = memory_props.memoryTypes[ i ];
         /** The heap associated with the index */
@@ -1142,9 +1147,11 @@ PROC vulkan_memory_find_best_type_index(
         x_missing_flag_n = 32;
 
         const std::bitset<32> preferred = preferred_flags;
-        const bool flags_different = absolute( preferred.count() - memory_type.count() );
+        const bool flags_different = (limit<i32>(preferred.count()) - limit<i32>(memory_type.count())
+                                      != 0);
         // Flags not present in type using bitwise trick
-        x_missing_flag_n = (preferred & (~memory_type)).count();
+        // NOTE: Count is never > 32
+        x_missing_flag_n = u32( (preferred & (~memory_type)).count() );
 
         // Print heap statistics
         if (first_run)
@@ -1165,7 +1172,8 @@ PROC vulkan_memory_find_best_type_index(
         }
 
         bool less_missing_flags = (x_missing_flag_n < best_missing_flag_n);
-        bool bigger_heap = (x_missing_flag_n == best_missing_flag_n) && (x_heap.size > best_heap_size);
+        i64 heap_size = clamp_i64( x_heap.size );
+        bool bigger_heap = (x_missing_flag_n == best_missing_flag_n) && (heap_size > best_heap_size);
         if (less_missing_flags)
         {   best_index = i;
             best_missing_flag_n = x_missing_flag_n;
@@ -1466,7 +1474,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         new_entry->value = {
             .block = old_entry.block,
             .index = new_entry->index,
-            .position = memory_align( old_entry.position, args.alignment ),
+            .position = (memory_align( old_entry.position, clamp_i32(args.alignment) )),
             .reserved_position = old_entry.position,
             // The actual size allocated for the object
             .size = args.size,
@@ -1500,7 +1508,7 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
         requirements.memoryTypeBits, memory_flags ).copy_default(-1);
     vulkan_allocate_args allocate_args {
         .size = i64(requirements.size),
-        .alignment = i64(requirements.alignment),
+        .alignment = limit<i64>( requirements.alignment ),
         .memory_type_index = best_index,
         .memory_flags = memory_flags,
         .transfer_buffer = buffer->transfer_buffer
@@ -1547,7 +1555,7 @@ PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> 
         requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ).copy_default(-1);
     vulkan_allocate_args allocate_args {
         .size = i64(requirements.size),
-        .alignment = i64(requirements.alignment),
+        .alignment = limit<i64>(requirements.alignment),
         .memory_type_index = best_index,
         .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
@@ -1758,13 +1766,13 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     VkDescriptorSetAllocateInfo mesh_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = g_vulkan->common_resource_pool,
-        .descriptorSetCount = mesh_resource.set_layouts.size(),
+        .descriptorSetCount = clamp_u32( mesh_resource.set_layouts.size() ),
         .pSetLayouts = mesh_resource.set_layouts.data
     };
     VkDescriptorSetAllocateInfo blit_resource_args {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = g_vulkan->common_resource_pool,
-        .descriptorSetCount = blit_resource.set_layouts.size(),
+        .descriptorSetCount = clamp_u32( blit_resource.set_layouts.size() ),
         .pSetLayouts = blit_resource.set_layouts.data
     };
 
@@ -2247,9 +2255,9 @@ PROC vulkan_init() -> fresult
 
     instance_args.pApplicationInfo = &app_info;
     instance_args.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    instance_args.enabledLayerCount = enabled_layers.size();
+    instance_args.enabledLayerCount = clamp_u32( enabled_layers.size() );
     instance_args.ppEnabledLayerNames = enabled_layers.data;
-    instance_args.enabledExtensionCount = enabled_extensions.size();
+    instance_args.enabledExtensionCount = clamp_u32( enabled_extensions.size() );
     instance_args.ppEnabledExtensionNames = enabled_extensions.data;
 
 
@@ -2487,7 +2495,7 @@ PROC vulkan_init() -> fresult
     VkDeviceCreateInfo device_args = {};
     device_args.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_args.pQueueCreateInfos = queues.data;
-    device_args.queueCreateInfoCount = queues.size();
+    device_args.queueCreateInfoCount = clamp_u32( queues.size() );
     device_args.pEnabledFeatures = &device_features;
 
     array<cstring> device_extensions = {
@@ -2496,9 +2504,9 @@ PROC vulkan_init() -> fresult
         // VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, // Multiple pixels per fragment
     };
     device_args.ppEnabledLayerNames = enabled_layers.data;
-    device_args.enabledLayerCount = enabled_layers.size();
+    device_args.enabledLayerCount = clamp_u32( enabled_layers.size() );
     device_args.ppEnabledExtensionNames = device_extensions.data;
-    device_args.enabledExtensionCount = device_extensions.size();
+    device_args.enabledExtensionCount = clamp_u32( device_extensions.size() );
 
     VULKAN_LOG( "Enabling Vulkan Instance Extensions:" );
     device_extensions.map_procedure( []( cstring arg ) {
@@ -2592,7 +2600,7 @@ PROC vulkan_init() -> fresult
 
     g_vulkan->test_ui_triangle = g_vulkan->test_triangle;
     g_vulkan->test_ui_triangle.name = "test_ui_triangle";
-    g_vulkan->test_ui_triangle.transform.rotation.z = 0.25 * 6.283185;
+    g_vulkan->test_ui_triangle.transform.rotation.z = 0.25f * 6.283185f;
 
     g_vulkan->test_ui_square = mesh {
         .name = "test_ui_square",
@@ -2726,7 +2734,7 @@ PROC vulkan_init() -> fresult
     sub_pass.pInputAttachments = nullptr;
     sub_pass.inputAttachmentCount = 0;
     sub_pass.pColorAttachments = color_attachment_refs.data;
-    sub_pass.colorAttachmentCount = color_attachment_refs.size();
+    sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
     VkRenderPassCreateInfo pass_args{};
@@ -2782,7 +2790,7 @@ PROC vulkan_init() -> fresult
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0x0,
         .maxSets = u32(g_vulkan->frames_inflight_count * 8000),
-        .poolSizeCount = descriptor_sizes.size(),
+        .poolSizeCount = clamp_u32( descriptor_sizes.size() ),
         .pPoolSizes = descriptor_sizes.data
     };
 
@@ -3288,7 +3296,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         vkCmdSetScissor( frame->command, 0, 1, &scissor_config );
     }
 
-    i32 i_limit = frame->draw_queue_command.size();
+    i32 i_limit = clamp_u32( frame->draw_queue_command.size() );
     for (i32 i=0; i < i_limit; ++i)
     {
         vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
@@ -3439,7 +3447,7 @@ PROC vulkan_draw_command_acquire_resource(
     // TODO: Try allocate a new batch of resources first
 
     // Found resource
-    arg->resource_index = resources_search.index;
+    arg->resource_index = clamp_i32( resources_search.index );
     // allocate 1 descriptor set from the resources
     arg->set_index = resources_search.match->sets_used;
     ++resources_search.match->sets_used;
