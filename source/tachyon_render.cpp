@@ -34,6 +34,7 @@ PROC render_thread( render_args* args ) -> void
 PROC render_init( render_args* args ) -> void
 {
     PROFILE_SCOPE_FUNCTION();
+    TYON_LOG( "Starting render initialization" );
 
     g_render = memory_allocate<render_context>( 1 );
     sdl = memory_allocate<platform_subsystem>(1);
