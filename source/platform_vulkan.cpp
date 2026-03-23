@@ -753,16 +753,6 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
             .descriptorCount = 1,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             .pImmutableSamplers = nullptr
-        },
-        {
-            // Old framebuffer contents
-            .binding = 2,
-            .descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
-            // if it's an array of resources we're sending to the shader.
-            .descriptorCount = 1,
-            // NOTE: input attachments can only be on the fragment shader
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-            .pImmutableSamplers = nullptr
         }
     };
     VkDescriptorSetLayoutCreateInfo descriptor_layout_args {
@@ -2112,7 +2102,7 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         draw_command->type = e_vulkan_draw::image;
         draw_command->pipeline = &g_vulkan->ui_blit_pipeline;
         draw_command->set_index = vulkan_draw_command_acquire_resource(
-            draw_command, frame, draw_command->pipeline );
+            draw_command, frame, draw_command->pipeline, 2 );
         draw_command->draw_image = vk_draw_image;
     }
     return true;
@@ -3201,7 +3191,7 @@ PROC vulkan_start_frame() -> void
         // TODO: Needs to change when we have multiple pipelines per mesh
         draw_command->pipeline = &g_vulkan->ui_mesh_pipeline;
         draw_command->set_index = vulkan_draw_command_acquire_resource(
-            draw_command, frame, draw_command->pipeline );
+            draw_command, frame, draw_command->pipeline, 2 );
         draw_command->draw_mesh = vk_draw_mesh;
 
         auto resource_search = frame->resources.resources.linear_search(
@@ -3243,6 +3233,68 @@ PROC vulkan_start_frame() -> void
             vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
         }
 
+    }
+
+    i32 i_command_limit = frame->draw_queue_command.size();
+    for (i32 i=0; i < i_command_limit; ++i)
+    {
+        vulkan_draw_command* draw_command = frame->draw_queue_command.address(0);
+        vulkan_image* draw_image = draw_command->draw_image;
+        if (draw_image == nullptr) { continue; }
+
+        // Transition the blit image a SHADER_READ_ONLY so the shader can read it
+        VkImageMemoryBarrier image_barrier =
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            // no prior access needed for present → transfer
+            .srcAccessMask       = 0,
+            .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+            // or UNDEFINED on first acquire
+            .oldLayout           = draw_image->platform_layout,
+            // We're writing so use transfer destination layout
+            .newLayout           = (draw_image->platform_layout =
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+            .image               = draw_image->platform_image,
+            .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+        };
+
+        vkCmdPipelineBarrier(
+            frame->command,
+            // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            // NOTE: Required flag when doing a barrier/transition inside a render pass
+            0x0,
+            0, nullptr,
+            0, nullptr,
+            1, &image_barrier
+        );
+
+
+        // Update descriptor sets if we need
+        // NOTE: Validation says it prefers descriptors to be updated before binding them
+        // NOTE: We setup descriptions per-draw command so we need to do this seperately to other logic
+        // But also do it after issuing transfers. But also before starting a render pass
+        // TODO: Do we need to synchronize this??
+        VkDescriptorImageInfo image_info {
+            .sampler = draw_command->pipeline->base_sampler,
+            .imageView = draw_image->platform_view,
+            .imageLayout = draw_image->platform_layout
+        };
+
+        VkWriteDescriptorSet resource_write_args {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = draw_command->platform_sets[0],
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &image_info,
+            .pBufferInfo = nullptr,
+            .pTexelBufferView = nullptr
+        };
+        vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
     }
 
     TracyCZoneEnd( zone_setup_frame );
@@ -3324,13 +3376,13 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 u32 n_buffers = 1;
                 vkCmdBindVertexBuffers( frame->command, 0, n_buffers, vertex_buffers, offsets );
                 u32 set_offset = 0;
-                u32 set_n = 1;
-                VkDescriptorSet set = draw_command->platform_set;
+                u32 set_n = draw_command->platform_sets.size();
+                VkDescriptorSet* sets = draw_command->platform_sets.data;
                 const uint32_t* dynamic_offsets = nullptr;
                 u32 dynamic_offsets_n = 0;
                 vkCmdBindDescriptorSets(
                     frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_layout,
-                    set_offset, set_n, &set, dynamic_offsets_n, dynamic_offsets );
+                    set_offset, set_n, sets, dynamic_offsets_n, dynamic_offsets );
                 // Pass push constants with basic mesh data
                 vulkan_mesh_shader_push mesh_push;
                 mesh_push.local_space = matrix_create_transform( vk_draw_mesh->transform );
@@ -3371,12 +3423,13 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                    NOTE: Bind a bogus buffer first since we don't actually need any vertex data */
                 u32 set_offset = 0;
                 u32 set_n = 1;
-                VkDescriptorSet set = draw_command->platform_set;
+                VkDescriptorSet* sets = draw_command->platform_sets.data;
                 const uint32_t* dynamic_offsets = nullptr;
                 u32 dynamic_offsets_n = 0;
                 vkCmdBindDescriptorSets(
-                    frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_layout,
-                    set_offset, set_n, &set, dynamic_offsets_n, dynamic_offsets );
+                    frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    draw_command->pipeline->platform_layout,
+                    set_offset, set_n, sets, dynamic_offsets_n, dynamic_offsets );
 
                 ERROR_GUARD( g_vulkan->meshes.head_size >= 1,
                              "We're supposed to have 1 valid mesh by now" );
@@ -3437,7 +3490,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 }
 
 PROC vulkan_draw_command_acquire_resource(
-    vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline ) -> fresult
+    vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline, i32 count ) -> fresult
 {
     auto resources_search = frame->resources.resources.linear_search(
         [pipeline_id = pipeline->id](auto& resources) {
@@ -3448,11 +3501,13 @@ PROC vulkan_draw_command_acquire_resource(
 
     // Found resource
     arg->resource_index = clamp_i32( resources_search.index );
-    // allocate 1 descriptor set from the resources
+    // allocate a few descriptor set from the resources
     arg->set_index = resources_search.match->sets_used;
-    ++resources_search.match->sets_used;
-    // Copy descriptor set for convenience
-    arg->platform_set = resources_search.match->sets[ arg->set_index ];
+    resources_search.match->sets_used += count;
+    // Copy descriptor sets
+    arg->platform_sets.resize( count );
+    memory_copy<VkDescriptorSet>(
+        arg->platform_sets.data, (resources_search.match->sets.data + arg->set_index), count );
     return true;
 }
 

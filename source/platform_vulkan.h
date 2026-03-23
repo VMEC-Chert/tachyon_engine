@@ -298,8 +298,8 @@ struct vulkan_draw_command
     /** What kind of draw command is requested */
     e_vulkan_draw type = e_vulkan_draw::none;
     vulkan_pipeline* pipeline;
-    // TODO: Testing to see if it makes sense to copy the handle
-    VkDescriptorSet platform_set;
+    // TODO: I can't for the life of me figure out if I need 1 or multiple desriptor sets per call
+    array<VkDescriptorSet> platform_sets;
     i32 resource_index {};
     /** Vulkan DescriptorSet index allocated out of vulkan_resources */
     i32 set_index {};
@@ -549,7 +549,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
 
 /** Allocate a new resource (descriptor set) just for this frame */
 PROC vulkan_draw_command_acquire_resource(
-    vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline ) -> fresult;
+    vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline, i32 count ) -> fresult;
 
 extern vulkan_context* g_vulkan;
 
