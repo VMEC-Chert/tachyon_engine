@@ -168,7 +168,8 @@ namespace tyon
             if (action == arg.id && arg.triggered)
             {   triggered = true;
                 arg.triggered = false;
-                TYON_LOGF( "Action triggered, keycode {}", SDL_GetScancodeName( arg.keyscan ) );
+                TYON_LOGF( "Action triggered, keycode {}, name {}",
+                           SDL_GetScancodeName( arg.keyscan ), arg.name );
             }
         });
         return triggered;
