@@ -152,18 +152,22 @@ namespace tyon
 
     PROC ui_action_create( ui_temp_action* arg ) -> uid
     {
+        // Synchronize first
+        std::unique_lock _lock { g_ui->actions_lock, std::defer_lock };
+        if (_lock.try_lock_for( 1ms ) == false) { TYON_ERROR( "Mutex timeout" ); return false; }
+
         arg->id = uuid_generate();
-        (void)g_ui->actions_update_timestamp.load();
         g_ui->actions_bound.push_tail( *arg );
-        g_ui->actions_update_timestamp = time_monotonic_ns();
         return arg->id;
     }
 
     PROC ui_action_triggered( uid action ) -> fresult
     {
-        // Atomic load, synchronization point
+        // Synchronize first. We use polling mostly we don't care to wait if updates aren't ready.
+        std::unique_lock _lock { g_ui->actions_lock, std::try_to_lock };
+        if ( ! _lock) { return false; }
+
         bool triggered = false;
-        (void)g_ui->actions_update_timestamp.load();
         g_ui->actions_bound.map_procedure( [action, &triggered](ui_temp_action& arg){
             if (action == arg.id && arg.triggered)
             {   triggered = true;

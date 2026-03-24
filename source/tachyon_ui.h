@@ -344,7 +344,7 @@ struct ui_context
     // Dynamically updating window state
     ui_input_state input;
     array<ui_temp_action> actions_bound;
-    std::atomic<time_monotonic_ns> actions_update_timestamp;
+    std::timed_mutex actions_lock;
 
     ui_frame frame_prev;
     ui_frame frame;
@@ -511,12 +511,14 @@ PROC ui_widget_construct_tree() -> widget_tree;
 /** Creates a new action
 
     Takes ui_temp_action as arguments, initializes the id and returns the uid also
-    NOTE: Thread safe. */
+    NOTE: Thread safe.
+    NOTE: May fail if mutex is busy. Waits up to 1ms */
 PROC ui_action_create( ui_temp_action* arg ) -> uid;
 
 /** Returns true if the supplied action has been triggered since last creation
 
- NOTE: Thread safe. */
+ NOTE: Thread safe.
+ NOTE: May return false if a mutex is busy*/
 PROC ui_action_triggered( uid action ) -> fresult;
 
 }
