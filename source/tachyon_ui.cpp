@@ -150,4 +150,28 @@ namespace tyon
         return {};
     }
 
+    PROC ui_action_create( ui_temp_action* arg ) -> uid
+    {
+        arg->id = uuid_generate();
+        (void)g_ui->actions_update_timestamp.load();
+        g_ui->actions_bound.push_tail( *arg );
+        g_ui->actions_update_timestamp = time_monotonic_ns();
+        return arg->id;
+    }
+
+    PROC ui_action_triggered( uid action ) -> fresult
+    {
+        // Atomic load, synchronization point
+        bool triggered = false;
+        (void)g_ui->actions_update_timestamp.load();
+        g_ui->actions_bound.map_procedure( [action, &triggered](ui_temp_action& arg){
+            if (action == arg.id && arg.triggered)
+            {   triggered = true;
+                arg.triggered = false;
+                TYON_LOGF( "Action triggered, keycode {}", SDL_GetScancodeName( arg.keyscan ) );
+            }
+        });
+        return triggered;
+    }
+
 }

@@ -94,6 +94,14 @@ struct action
   // NOTE: Actions should not who invokes the action, they should instead link to the action.
 };
 
+struct ui_temp_action
+{
+    uid id;
+    fstring name;
+    SDL_Scancode keyscan = SDL_SCANCODE_UNKNOWN;
+    bool triggered = false;
+};
+
 struct keybind_chain_step
 {
   SDL_Scancode scancode;
@@ -335,6 +343,8 @@ struct ui_context
     ui_font default_font;
     // Dynamically updating window state
     ui_input_state input;
+    array<ui_temp_action> actions_bound;
+    std::atomic<time_monotonic_ns> actions_update_timestamp;
 
     ui_frame frame_prev;
     ui_frame frame;
@@ -497,5 +507,16 @@ PROC ui_tick_end() -> void;
 PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool;
 
 PROC ui_widget_construct_tree() -> widget_tree;
+
+/** Creates a new action
+
+    Takes ui_temp_action as arguments, initializes the id and returns the uid also
+    NOTE: Thread safe. */
+PROC ui_action_create( ui_temp_action* arg ) -> uid;
+
+/** Returns true if the supplied action has been triggered since last creation
+
+ NOTE: Thread safe. */
+PROC ui_action_triggered( uid action ) -> fresult;
 
 }

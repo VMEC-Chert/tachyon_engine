@@ -185,6 +185,16 @@ namespace tyon
                     break;
                 case SDL_EVENT_KEY_DOWN:
                 {
+                    (void)g_ui->actions_update_timestamp.load();
+                    g_ui->actions_bound.map_procedure( [key_event_ = x_event.key](ui_temp_action& arg){
+                        if (arg.keyscan == key_event_.scancode)
+                        {
+                            arg.triggered = true;
+                        }
+                    });
+                    // NOTE: Not high volume enough to avoid synchronization
+                    g_ui->actions_update_timestamp = time_now_ns();
+
                     // TODO: tmp testing, remove me
                     if (x_event.key.repeat == false)
                     {
