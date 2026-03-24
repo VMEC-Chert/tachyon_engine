@@ -2172,13 +2172,15 @@ PROC vulkan_init() -> fresult
     });
     VULKAN_LOG( "" );
     VULKAN_LOG( "Enumerating Available Instance Extensions:" );
-    available_extensions.map_procedure( []( VkExtensionProperties& arg ) {
+    bool ext_budget = false;
+    available_extensions.map_procedure( [&]( VkExtensionProperties& arg ) {
         VULKAN_LOGF( "    {} {}.{}.{}",
                      arg.extensionName,
                      VK_API_VERSION_MAJOR( arg.specVersion ),
                      VK_API_VERSION_MINOR( arg.specVersion ),
                      VK_API_VERSION_PATCH( arg.specVersion )
         );
+        if (arg.extensionName == VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) { ext_budget = true; }
     });
     VULKAN_LOG( "" );
 
@@ -2197,6 +2199,7 @@ PROC vulkan_init() -> fresult
         // Promoted to debug_utils, might still required for older versions, but not modern nvidia
         // VK_EXT_DEBUG_MARKER_EXTENSION_NAME,
     };
+    if (ext_budget) { enabled_extensions.push_tail( VK_EXT_MEMORY_BUDGET_EXTENSION_NAME ); }
     /* NOTE: The instance will refuse to load if it doesn't support the enabled extensions
        So we need to make extra sure it's actually supported before we make enable the extension */
     if (g_render->window_platform == e_window_platform::x11)
