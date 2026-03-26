@@ -2973,12 +2973,18 @@ PROC vulkan_start_frame() -> void
     vkResetCommandBuffer( frame->command, 0x0 );
 
     /* NOTE: We can have multiple frames inflight so we need to copy a seperate
-       draw queue for each frame */
+       draw queue for each frame
+
+       Reset a bunch of per-frame data */
     frame->draw_queue_command.reset();
     frame->draw_queue_mesh.reset();
     frame->draw_queue_image.reset();
     frame->draw_queue_mesh = g_render->draw_queue_mesh;
     frame->draw_queue_image = g_render->draw_queue_image;
+
+    // Reset resource allocations
+    frame->resources.resources.map_procedure( [](vulkan_resources& arg) {
+        arg.sets_used = 0; });
 
     frame->draw_index = current_frame_i;
     frame->inflight_index = inflight_frame_i;
