@@ -259,6 +259,14 @@ struct vulkan_mesh
     vulkan_buffer vertex_buffer;
     vulkan_buffer vertex_indexes_buffer;
     vulkan_buffer color_buffer;
+    /** When the DescriptorSet was last updated.
+
+        NOTE: This is per-frame so we won't store resource handles and instead
+        will associate it with a draw command
+
+        NOTE: If this resource update is very far out of date with
+        update_timestamp it's indicative of an update bug */
+    time_monotonic_ns resource_update_timestamp = 0;
 };
 
 struct vulkan_image
@@ -268,6 +276,14 @@ struct vulkan_image
     VkImage platform_image;
     v2_f32 size;
     time_monotonic_ns update_timestamp = 0;
+    /** When the DescriptorSet was last updated.
+
+        NOTE: This is per-frame so we won't store resource handles and instead
+        will associate it with a draw command
+
+        NOTE: If this resource update is very far out of date with
+        update_timestamp it's indicative of an update bug */
+    time_monotonic_ns resource_update_timestamp = 0;
     vulkan_memory_entry memory;
     vulkan_buffer staging_buffer;
     /** Current tracked layout */
@@ -301,7 +317,7 @@ struct vulkan_draw_command
     // TODO: I can't for the life of me figure out if I need 1 or multiple desriptor sets per call
     array<VkDescriptorSet> platform_sets;
     i32 resource_index {};
-    /** Vulkan DescriptorSet index allocated out of vulkan_resources */
+    /** Vulkan DescriptorSet index allocated out of internal vulkan_resources pool */
     i32 set_index {};
     vulkan_mesh* draw_mesh {};
     vulkan_image* draw_image {};

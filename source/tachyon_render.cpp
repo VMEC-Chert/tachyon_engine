@@ -148,7 +148,7 @@ PROC render_tick() -> void
     {
         case e_render_backend::vulkan:
             // TODO: temporary disabled whilst working on allocator
-            // vulkan_tick();
+            vulkan_tick();
             break;
         case e_render_backend::opengl:
             TYON_BREAK();

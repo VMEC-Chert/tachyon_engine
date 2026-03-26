@@ -2101,9 +2101,10 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         vulkan_draw_command* draw_command = &frame->draw_queue_command.push_tail({});
         draw_command->type = e_vulkan_draw::image;
         draw_command->pipeline = &g_vulkan->ui_blit_pipeline;
-        draw_command->set_index = vulkan_draw_command_acquire_resource(
-            draw_command, frame, draw_command->pipeline, 2 );
         draw_command->draw_image = vk_draw_image;
+        vulkan_draw_command_acquire_resource(
+            draw_command, frame, draw_command->pipeline, 1 );
+
     }
     return true;
 }
@@ -3193,9 +3194,9 @@ PROC vulkan_start_frame() -> void
         draw_command->type = e_vulkan_draw::mesh;
         // TODO: Needs to change when we have multiple pipelines per mesh
         draw_command->pipeline = &g_vulkan->ui_mesh_pipeline;
-        draw_command->set_index = vulkan_draw_command_acquire_resource(
-            draw_command, frame, draw_command->pipeline, 2 );
         draw_command->draw_mesh = vk_draw_mesh;
+        vulkan_draw_command_acquire_resource(
+            draw_command, frame, draw_command->pipeline, 1 );
 
         auto resource_search = frame->resources.resources.linear_search(
             [pipeline_id = g_vulkan->mesh_pipeline.id](vulkan_resources& arg) {
@@ -3222,10 +3223,11 @@ PROC vulkan_start_frame() -> void
             VkWriteDescriptorSet resource_write_args {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .pNext = nullptr,
-                .dstSet = resources->sets[ draw_command->set_index ],
+                // TODO: Hardcoded to the only set
+                .dstSet = draw_command->platform_sets[0],
                 .dstBinding = 0,
                 // NOTE: I think this is start index in the list of descriptors to use
-                .dstArrayElement = u32(maximum<i32>( 0, draw_command->set_index )),
+                .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                 .pImageInfo = nullptr,
@@ -3234,6 +3236,7 @@ PROC vulkan_start_frame() -> void
             };
             // Finalize the copy. No error return.
             vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+            vk_draw_mesh->resource_update_timestamp = time_now_ns();
         }
 
     }
@@ -3298,6 +3301,13 @@ PROC vulkan_start_frame() -> void
             .pTexelBufferView = nullptr
         };
         vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+        draw_image->resource_update_timestamp = time_now_ns();
+
+        if (draw_image->resource_update_timestamp == 0)
+        {   VULKAN_ERROR( "WTF" );
+            TYON_BREAK();
+        }
+
     }
 
     TracyCZoneEnd( zone_setup_frame );
@@ -3371,6 +3381,11 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                    command */
                 vulkan_mesh* vk_draw_mesh = draw_command->draw_mesh;
 
+                bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
+                                     vk_draw_mesh->resource_update_timestamp == 0);
+                // No point continuing  if our DescriptorSets are bad
+                if (bad_resource) { continue; }
+
                 // Bind vertex/ data to pipeline data slots
                 VkBuffer vertex_buffers[] = { vk_draw_mesh->vertex_buffer.buffer };
                 /** NOTE: This is the offset for the binding being described by the
@@ -3413,6 +3428,11 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
             case e_vulkan_draw::image:
             {
                 vulkan_image* draw_image = draw_command->draw_image;
+                // TODO: Update this is we start using a whole array of resoruces
+                bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
+                                     draw_image->resource_update_timestamp == 0);
+                // No point continuing  if our DescriptorSets are bad
+                if (bad_resource) { continue; }
 
                 // Bind correct pipeline first
                 vkCmdBindPipeline(
@@ -3440,6 +3460,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 u32 n_buffers = 1;
                 VkBuffer& stub_buffer = g_vulkan->meshes[0].vertex_buffer.buffer;
                 vkCmdBindVertexBuffers( frame->command, 0, n_buffers, &stub_buffer, offsets );
+
+                // Do actual draw
                 vkCmdDraw( frame->command, 3, 1, 0, 0 );
             }
             default: break;
@@ -3499,7 +3521,10 @@ PROC vulkan_draw_command_acquire_resource(
         [pipeline_id = pipeline->id](auto& resources) {
             return (resources.pipeline == pipeline_id) && resources.sets_used < resources.set_count; });
     if (resources_search.match_found == false)
-    {   return false; }
+    {
+        // VULKAN_ERROR( "Failed to acquire draw call resource" );
+        return false;
+    }
     // TODO: Try allocate a new batch of resources first
 
     // Found resource
