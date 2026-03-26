@@ -3441,7 +3441,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
             {
                 vulkan_image* draw_image = draw_command->draw_image;
                 // TODO: Update this is we start using a whole array of resoruces
-                bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
+                bool bad_resource = (draw_command->platform_sets[0] == VK_NULL_HANDLE ||
                                      draw_image->resource_update_timestamp == 0);
                 // No point continuing  if our DescriptorSets are bad
                 if (bad_resource || draw_image == nullptr)
