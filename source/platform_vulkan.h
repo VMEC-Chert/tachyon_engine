@@ -480,6 +480,8 @@ struct vulkan_context
     bool device_lost = false;
     i64 frames_started = 0;
     i64 frames_completed = 0;
+    i64 failed_descriptor_updates = 0;
+    i64 failed_draw_commands = 0;
 };
 
 PROC vulkan_allocator_create_callbacks( i_allocator* allocator );
@@ -512,7 +514,8 @@ PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
 PROC vulkan_memory_get_block( vulkan_memory context, i64 block_index ) -> vulkan_memory_block&;
 
 /** Returns the index of the best memory type to use for this type. Monad
- * returns with an error if it's bad */
+ * returns with an error if it's bad
+ NOTE: This function assumes that all object types use the same (device local) memory */
 PROC vulkan_memory_find_best_type_index(
     std::bitset<32> valid_type_bits, VkMemoryPropertyFlags preferred_flags ) -> monad<i32>;
 

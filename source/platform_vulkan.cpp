@@ -927,9 +927,10 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     swapchain_args.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     swapchain_args.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-    swapchain_args.queueFamilyIndexCount = 2;
+    // Queue family indices is only for VK_SHARING_MODE_CONCURRENT
+    swapchain_args.queueFamilyIndexCount = 0;
     u32 family_indexes[] = { u32(self->graphics_queue_family), u32(self->present_queue_family) };
-    swapchain_args.pQueueFamilyIndices = family_indexes;
+    swapchain_args.pQueueFamilyIndices = nullptr;
     swapchain_args.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     swapchain_args.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapchain_args.oldSwapchain = reuse_swapchain;
@@ -2104,6 +2105,8 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         draw_command->draw_image = vk_draw_image;
         vulkan_draw_command_acquire_resource(
             draw_command, frame, draw_command->pipeline, 1 );
+        if (draw_command->platform_sets[0] == VK_NULL_HANDLE)
+        { TYON_BREAK(); }
 
     }
     return true;
@@ -2856,6 +2859,25 @@ PROC vulkan_tick() -> void
     vulkan_start_frame();
 }
 
+PROC vulkan_frame_reset( vulkan_frame* frame ) -> void
+{
+    vkResetCommandBuffer( frame->command, 0x0 );
+
+    /* NOTE: We can have multiple frames inflight so we need to copy a seperate
+       draw queue for each frame
+
+       Reset a bunch of per-frame data */
+    frame->draw_queue_command.reset();
+    frame->draw_queue_mesh.reset();
+    frame->draw_queue_image.reset();
+    frame->draw_queue_mesh = g_render->draw_queue_mesh;
+    frame->draw_queue_image = g_render->draw_queue_image;
+
+    // Reset resource allocations
+    frame->resources.resources.map_procedure( [](vulkan_resources& arg) {
+        arg.sets_used = 0; });
+};
+
 PROC vulkan_start_frame() -> void
 {
     PROFILE_SCOPE_FUNCTION();
@@ -2970,27 +2992,13 @@ PROC vulkan_start_frame() -> void
     // SECTION: Set up some per frame data
     vulkan_pipeline* current_pipeline = &g_vulkan->ui_mesh_pipeline;
 
-    vkResetCommandBuffer( frame->command, 0x0 );
-
-    /* NOTE: We can have multiple frames inflight so we need to copy a seperate
-       draw queue for each frame
-
-       Reset a bunch of per-frame data */
-    frame->draw_queue_command.reset();
-    frame->draw_queue_mesh.reset();
-    frame->draw_queue_image.reset();
-    frame->draw_queue_mesh = g_render->draw_queue_mesh;
-    frame->draw_queue_image = g_render->draw_queue_image;
-
-    // Reset resource allocations
-    frame->resources.resources.map_procedure( [](vulkan_resources& arg) {
-        arg.sets_used = 0; });
+    vulkan_frame_reset( frame );
 
     frame->draw_index = current_frame_i;
     frame->inflight_index = inflight_frame_i;
     // TODO: Change this if we go back to a 3D pipeline, this was meant for UI rendering
     frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
-                                     g_render->ui_camera.create_orthographic_projection());
+                             g_render->ui_camera.create_orthographic_projection());
 
     // SECTION: Iterate through the draw images and see if any need updating before drawing
     // NOTE: We have to do this after aquiring a new frame or we keep on issuing endless commands on VK_TIMEOUT
@@ -3250,10 +3258,10 @@ PROC vulkan_start_frame() -> void
     i32 i_command_limit = frame->draw_queue_command.size();
     for (i32 i=0; i < i_command_limit; ++i)
     {
-        vulkan_draw_command* draw_command = frame->draw_queue_command.address(0);
+        vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
         vulkan_image* draw_image = draw_command->draw_image;
-        if (draw_image == nullptr || draw_command[0].platform_sets[0] == VK_NULL_HANDLE)
-    { continue; }
+        if (draw_image == nullptr || draw_command->platform_sets[0] == VK_NULL_HANDLE)
+        { g_vulkan->failed_descriptor_updates++; continue; }
 
         // Transition the blit image a SHADER_READ_ONLY so the shader can read it
         VkImageMemoryBarrier image_barrier =
@@ -3369,8 +3377,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
         switch (draw_command->type)
         {
-            case e_vulkan_draw::none: VULKAN_ERROR( "Passed draw command with 'none' type" );
-            case e_vulkan_draw::any: VULKAN_ERROR( "Passed draw command with 'any' type" );
+            case e_vulkan_draw::none: VULKAN_ERROR( "Passed draw command with 'none' type" ); break;
+            case e_vulkan_draw::any: VULKAN_ERROR( "Passed draw command with 'any' type" ); break;
             case e_vulkan_draw::mesh:
             {
                 /* SECTION: Select mesh for drawing
@@ -3386,7 +3394,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
                                      vk_draw_mesh->resource_update_timestamp == 0);
                 // No point continuing  if our DescriptorSets are bad
-                if (bad_resource) { continue; }
+                if (bad_resource || vk_draw_mesh == nullptr)
+                { g_vulkan->failed_draw_commands++; continue; }
 
                 // Bind vertex/ data to pipeline data slots
                 VkBuffer vertex_buffers[] = { vk_draw_mesh->vertex_buffer.buffer };
@@ -3426,6 +3435,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 vkCmdDraw(
                     frame->command, mesh_args.n_vertexes, mesh_args.n_instances, mesh_args.first_vertex,
                     mesh_args.first_instance );
+                break;
             }
             case e_vulkan_draw::image:
             {
@@ -3434,7 +3444,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
                                      draw_image->resource_update_timestamp == 0);
                 // No point continuing  if our DescriptorSets are bad
-                if (bad_resource) { continue; }
+                if (bad_resource || draw_image == nullptr)
+                { g_vulkan->failed_draw_commands++; continue; }
 
                 // Bind correct pipeline first
                 vkCmdBindPipeline(
@@ -3465,6 +3476,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 
                 // Do actual draw
                 vkCmdDraw( frame->command, 3, 1, 0, 0 );
+                break;
             }
             default: break;
         }
