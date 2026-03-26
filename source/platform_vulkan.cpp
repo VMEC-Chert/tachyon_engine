@@ -3246,7 +3246,8 @@ PROC vulkan_start_frame() -> void
     {
         vulkan_draw_command* draw_command = frame->draw_queue_command.address(0);
         vulkan_image* draw_image = draw_command->draw_image;
-        if (draw_image == nullptr) { continue; }
+        if (draw_image == nullptr || draw_command[0].platform_sets[0] == VK_NULL_HANDLE)
+    { continue; }
 
         // Transition the blit image a SHADER_READ_ONLY so the shader can read it
         VkImageMemoryBarrier image_barrier =
@@ -3302,11 +3303,6 @@ PROC vulkan_start_frame() -> void
         };
         vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
         draw_image->resource_update_timestamp = time_now_ns();
-
-        if (draw_image->resource_update_timestamp == 0)
-        {   VULKAN_ERROR( "WTF" );
-            TYON_BREAK();
-        }
 
     }
 
