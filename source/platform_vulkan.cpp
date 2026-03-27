@@ -1084,6 +1084,11 @@ PROC vulkan_buffer_create(
         .sharing_mode = sharing_mode
     };
 
+    if (size == 0)
+    {   VULKAN_ERROR( "Tried to create buffer with zero size" );
+        return result;
+    }
+
     VkBufferCreateInfo buffer_args {};
     buffer_args.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_args.size = u32(size);
@@ -1202,7 +1207,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
 
     // Actually allocate the block
     auto memory_bad = vkAllocateMemory(
-    g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &new_block->memory);
+        g_vulkan->logical_device, &memory_args, g_vulkan->vk_allocator, &new_block->memory);
 
     if (memory_bad)
     {   VULKAN_ERRORF( "Failed to allocate general memory object: {}",
@@ -1210,6 +1215,8 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
         context->blocks.pop_tail();
         return false;
     }
+    g_vulkan->resources.push_cleanup( [memory = new_block->memory] {
+        vkFreeMemory( g_vulkan->logical_device, memory, g_vulkan->vk_allocator ); });
 
     /* SECTION: Successful allocation, we can fill in the block data, null
        handle or 0 size is an invalid block */
@@ -1695,14 +1702,6 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
 
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
-    // Create a host mappable staging/transfer buffer (try to use faster(*) BAR memory
-    // * not sur if this is actualy faster or not
-    image->size = { f32(arg->image.size.x), f32(arg->image.size.y) };
-    image->staging_buffer = vulkan_buffer_create(
-        "image_transfer", arg->image.size_bytes(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT );
-    image->staging_buffer.memory_flags =
-        (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-    vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &image->staging_buffer );
 
     // Create an image view
     VkImageViewCreateInfo view_args{};
@@ -1805,8 +1804,17 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     {   return false;
     }
 
-    vulkan_memory_block& uniform_block = vulkan_memory_get_block(
-        &g_vulkan->device_memory, &arg->general_uniform_buffer.memory );
+    i32 blit_uniforms_n = g_vulkan->ui_blit_pipeline.uniform_count;
+    arg->blit_uniforms.resize( blit_uniforms_n );
+    arg->blit_uniforms_buffer = vulkan_buffer_create(
+        "ui_blit_uniform",
+        sizeof( vulkan_ui_blit_uniform ) * blit_uniforms_n,
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+    );
+
+    // TODO: Delete me
+    // vulkan_memory_block& uniform_block = vulkan_memory_get_block(
+        // &g_vulkan->device_memory, &arg->general_uniform_buffer.memory );
 
     // Create a command buffer for this one frame
     VkCommandBufferAllocateInfo command_args{};
@@ -3107,7 +3115,7 @@ PROC vulkan_start_frame() -> void
                     [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
                         return (arg_.id == image_id) && arg_.id.valid(); } );
                 vulkan_image* vk_image = image_result.match;
-                if (vk_image == nullptr) { break; }
+                if (vk_image == nullptr || vk_image->size.x < 1 || vk_image->size.y < 1) { continue; }
 
                 v2_f32 image_size = vk_image->size;
                 VkBufferImageCopy copy_region {

@@ -27,6 +27,14 @@ enum class e_vulkan_memory_object : i32
     image
 };
 
+struct vulkan_ui_blit_uniform
+{
+    matrix transform = matrix::one();
+    /* Image size in arbitrary coordinates. Will use screenspace if transform is normal */
+    v2 size;
+    v4 tint;
+};
+
 struct vulkan_mesh_shader_push
 {
     matrix local_space = matrix::one();
@@ -67,6 +75,8 @@ struct vulkan_pipeline
     fstring name = "unnamed";
     array<vulkan_shader> shaders;
     vulkan_swapchain* swapchain = nullptr;
+    /** How large the array of dynamic uniforms to allocate */
+    i32 uniform_count = 4000;
 
     VkPipeline platform_pipeline {};
     VkPipelineLayout platform_layout {};
@@ -285,7 +295,7 @@ struct vulkan_image
         update_timestamp it's indicative of an update bug */
     time_monotonic_ns resource_update_timestamp = 0;
     vulkan_memory_entry memory;
-    vulkan_buffer staging_buffer;
+    i32 uniform_index = 0;
     /** Current tracked layout */
     VkImageLayout platform_layout;
     VkImageView platform_view;
@@ -350,6 +360,10 @@ struct vulkan_frame
     i32 inflight_index = -1;
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;
+
+    array<vulkan_ui_blit_uniform> blit_uniforms;
+    vulkan_buffer blit_uniforms_buffer;
+
     VkCommandBuffer command {};
     VkFence end_fence {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
