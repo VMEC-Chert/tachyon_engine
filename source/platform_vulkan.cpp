@@ -762,6 +762,13 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         .pBindings = resource_descriptors.data,
     };
 
+    VkPushConstantRange push_constant_range {
+        .stageFlags = VK_SHADER_STAGE_ALL,
+        // Data start offset
+        .offset = 0,
+        .size = sizeof(  vulkan_ui_blit_push )
+    };
+
     /* Pipeline Layout: "An object defining the set of resources (via a
        collection of descriptor set layouts) and push constants used by
        pipelines that are created using the layout. Used when creating a
@@ -771,8 +778,8 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     layout_args.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_args.pSetLayouts = &arg->platform_descriptor_layout;
     layout_args.setLayoutCount = 1;
-    layout_args.pushConstantRangeCount = 0;
-    layout_args.pPushConstantRanges = nullptr;
+    layout_args.pushConstantRangeCount = 1;
+    layout_args.pPushConstantRanges = &push_constant_range;
 
     auto descriptor_layout_ok = vkCreateDescriptorSetLayout(
         g_vulkan->logical_device,
@@ -1804,6 +1811,7 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     {   return false;
     }
 
+    // Create Blit shader specific uniforms
     i32 blit_uniforms_n = g_vulkan->ui_blit_pipeline.uniform_count;
     arg->blit_uniforms.resize( blit_uniforms_n );
     arg->blit_uniforms_buffer = vulkan_buffer_create(
@@ -3482,6 +3490,19 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 VkBuffer& stub_buffer = g_vulkan->meshes[0].vertex_buffer.buffer;
                 vkCmdBindVertexBuffers( frame->command, 0, n_buffers, &stub_buffer, offsets );
 
+                vulkan_ui_blit_push push_constants {
+                    .uniform_index = draw_command->uniform_index
+                };
+                // Set push constants for draw call
+                vkCmdPushConstants(
+                    frame->command,
+                    draw_command->pipeline->platform_layout,
+                    VK_SHADER_STAGE_ALL,
+                    0,
+                    sizeof( vulkan_ui_blit_push),
+                    &push_constants
+                );
+
                 // Do actual draw
                 vkCmdDraw( frame->command, 3, 1, 0, 0 );
                 break;
@@ -3559,6 +3580,38 @@ PROC vulkan_draw_command_acquire_resource(
     memory_copy<VkDescriptorSet>(
         arg->platform_sets.data, (resources_search.match->sets.data + arg->set_index), count );
     return true;
+}
+
+PROC vulkan_ui_blit_command_update_data(
+    vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
+    -> void
+{
+    switch (draw_command->type)
+    {
+        case e_vulkan_draw::mesh:
+        {
+            break;
+        }
+        case e_vulkan_draw::image:
+        {
+            vulkan_image* draw_image = draw_command->draw_image;
+            if (draw_command == nullptr) { return; }
+
+            bool out_of_uniforms = (frame->blit_uniforms.size() >= pipeline->uniform_count);
+            if ( ! out_of_uniforms)
+            {
+                i32 acquired_uniform = frame->blit_uniforms_used++;
+                draw_command->uniform_index = acquired_uniform;
+                auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
+                uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+            }
+            break;
+        }
+        default:
+        {
+            break;
+        }
+    }
 }
 
 }

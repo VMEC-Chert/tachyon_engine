@@ -10,6 +10,8 @@ namespace tyon
 #define VULKAN_ERRORF( FORMAT_, ... ) TYON_BASE_ERRORF( "Vulkan Error", FORMAT_, __VA_ARGS__ );
 
 FORWARD struct vulkan_memory;
+FORWARD struct vulkan_frame;
+FORWARD struct vulkan_draw_command;
 
 enum class e_vulkan_shader_debug : i32
 {
@@ -33,6 +35,11 @@ struct vulkan_ui_blit_uniform
     /* Image size in arbitrary coordinates. Will use screenspace if transform is normal */
     v2 size;
     v4 tint;
+};
+
+struct vulkan_ui_blit_push
+{
+    i32 uniform_index = 0;
 };
 
 struct vulkan_mesh_shader_push
@@ -84,6 +91,8 @@ struct vulkan_pipeline
     VkRenderPass platform_render_pass {};
     VkSampler base_sampler {};
 
+    /** Dynamic pipeline specific function  */
+    generic_procedure<void( vulkan_frame*, vulkan_pipeline*, vulkan_draw_command* )> command_update_data;
 };
 
 struct vulkan_heap
@@ -329,6 +338,8 @@ struct vulkan_draw_command
     i32 resource_index {};
     /** Vulkan DescriptorSet index allocated out of internal vulkan_resources pool */
     i32 set_index {};
+    /** Index into the frame's uniform buffers */
+    i32 uniform_index {};
     vulkan_mesh* draw_mesh {};
     vulkan_image* draw_image {};
 };
@@ -339,6 +350,7 @@ struct vulkan_resources
     uid pipeline;
     array<VkDescriptorSet> sets;
     array<VkDescriptorSetLayout> set_layouts;
+    pointer<byte> uniforms = nullptr;
     i32 sets_used {};
     i32 set_count {};
 };
@@ -361,8 +373,10 @@ struct vulkan_frame
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;
 
-    array<vulkan_ui_blit_uniform> blit_uniforms;
     vulkan_buffer blit_uniforms_buffer;
+    // TODO: Temporary, don't need to be generic right now
+    array<vulkan_ui_blit_uniform> blit_uniforms;
+    i32 blit_uniforms_used = 0;
 
     VkCommandBuffer command {};
     VkFence end_fence {};
@@ -583,6 +597,10 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
 /** Allocate a new resource (descriptor set) just for this frame */
 PROC vulkan_draw_command_acquire_resource(
     vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline, i32 count ) -> fresult;
+
+PROC vulkan_ui_blit_command_update_data(
+    vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
+    -> void;
 
 extern vulkan_context* g_vulkan;
 
