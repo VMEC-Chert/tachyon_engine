@@ -3067,154 +3067,9 @@ PROC vulkan_start_frame() -> void
 
     // -- Start recording into first subpass.--
     // This is started after beginning a command buffer.
-    // SECTION: Start recording memory transfers before we start any rendering
 
-    vulkan_transfer* x_transfer = nullptr;
-    vulkan_transfer_buffer* x_transfer_buffer = nullptr;
-    for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
-    {
-        x_transfer = g_vulkan->transfer.transfer_queue.address(i);
-        x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
-        search_result<vulkan_buffer> buffer_search = g_vulkan->buffers.linear_search(
-            [id = x_transfer_buffer->buffer](vulkan_buffer& arg) {
-                return arg.id == id; });
-        VkBuffer staging_buffer = buffer_search.match->buffer;
 
-        switch (x_transfer->destination)
-        {
-            case e_vulkan_memory_object::buffer:
-            {
-                VkBufferCopy copy_region {
-                    .srcOffset = u64(x_transfer->position),
-                    .dstOffset = u64(x_transfer->buffer_offset),
-                    .size = u64(x_transfer->size)
-                };
-
-                if (buffer_search.match_found)
-                {
-                    vkCmdCopyBuffer(
-                        frame->command,
-                        staging_buffer,
-                        x_transfer->destination_buffer,
-                        1,
-                        &copy_region
-                    );
-
-                    // NOTE: I guess we need a seperate barrier depending on the memory object?
-                    VkBufferMemoryBarrier transfer_barrier {
-                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-                        .pNext = nullptr,
-                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-                        // TODO: What is the destination mask meant to be?
-                        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
-                        // TODO: Revise if the queue family changes
-                        .srcQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
-                        .dstQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
-                        .buffer = x_transfer->destination_buffer,
-                        .offset = copy_region.dstOffset,
-                        .size = copy_region.size
-                    };
-                    vkCmdPipelineBarrier(
-                        frame->command,
-                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-                        // VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT is depreceated aparently
-                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        // TODO: Investigate what dependency bits to use
-                        0,
-                        0, nullptr,
-                        1, &transfer_barrier,
-                        0, nullptr
-                    );
-                }
-                break;
-            }
-            case e_vulkan_memory_object::image:
-            {
-                auto image_result = g_vulkan->images.linear_search(
-                    [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
-                        return (arg_.id == image_id) && arg_.id.valid(); } );
-                vulkan_image* vk_image = image_result.match;
-                if (vk_image == nullptr || vk_image->size.x < 1 || vk_image->size.y < 1) { continue; }
-
-                v2_f32 image_size = vk_image->size;
-                VkBufferImageCopy copy_region {
-                    .bufferOffset = static_cast<u64>(x_transfer->position),
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {
-                        // TODO: I don't unerstand what this flag is
-                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                        .mipLevel = 0,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1
-                    },
-                    .imageOffset = { 0, 0, 0 },
-                    .imageExtent { u32(image_size.x), u32(image_size.y), u32(1) }
-                };
-
-                if (buffer_search.match_found)
-                {
-
-                    VkImageMemoryBarrier copy_barrier = {
-                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                        // no prior access needed for present → transfer
-                        .srcAccessMask       = 0,
-                        // TODO: No idea what access mask to use
-                        .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
-                        // or UNDEFINED on first acquire
-                        .oldLayout           = vk_image->platform_layout,
-                        // Make it available to use now
-                        .newLayout           = vk_image->platform_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        .image               = vk_image->platform_image,
-                        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-                    };
-
-                    vkCmdPipelineBarrier(
-                        frame->command,
-                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                        VK_PIPELINE_STAGE_TRANSFER_BIT,
-                        0,
-                        0, nullptr,
-                        0, nullptr,
-                        1, &copy_barrier
-                    );
-                    vkCmdCopyBufferToImage(
-                        frame->command,
-                        staging_buffer,
-                        vk_image->platform_image,
-                        vk_image->platform_layout,
-                        1,
-                        &copy_region
-                    );
-
-                }
-                break;
-            }
-            default: break;
-        }
-    }
-    /* The memory transfer queue isn't strictly bound to a frame... and I don't
-       know if it will ever need to be...  but it should be safe to reset each
-       time because its passed to the command buffer to save the state... and it
-       only needs to be done once...
-
-       WARNING: HOWEVER, you do have to synchronize with a barrier before
-       starting a new transfer
-
-       NOTE: I keep on moving this because of issues with resetting it too early
-       and the more time I relocate it the more I think my current Vulkan
-       organization is wrong in some way
-
-       NOTE: It doesn't actually have to be reset here, it just needs to be
-       reset when all the transfers are done. */
-    // Reset everyting to do with per-frame transfers
-    g_vulkan->transfer.transfer_queue.reset();
-    // Need to reset used position too
-    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
-        arg.head_size = 0; });
-
+    vulkan_command_execute_transfers( g_vulkan->transfer, frame );
 
     // SECTION: Update descriptors for drawn objects
     for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
@@ -3686,6 +3541,158 @@ PROC vulkan_ui_blit_command_update_data(
             break;
         }
     }
+}
+
+vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame )
+
+{
+    // SECTION: Start recording memory transfers before we start any rendering
+
+    vulkan_transfer* x_transfer = nullptr;
+    vulkan_transfer_buffer* x_transfer_buffer = nullptr;
+    for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
+    {
+        x_transfer = g_vulkan->transfer.transfer_queue.address(i);
+        x_transfer_buffer = g_vulkan->transfer.buffers.address( x_transfer->buffer_index );
+        search_result<vulkan_buffer> buffer_search = g_vulkan->buffers.linear_search(
+            [id = x_transfer_buffer->buffer](vulkan_buffer& arg) {
+                return arg.id == id; });
+        VkBuffer staging_buffer = buffer_search.match->buffer;
+
+        switch (x_transfer->destination)
+        {
+            case e_vulkan_memory_object::buffer:
+            {
+                VkBufferCopy copy_region {
+                    .srcOffset = u64(x_transfer->position),
+                    .dstOffset = u64(x_transfer->buffer_offset),
+                    .size = u64(x_transfer->size)
+                };
+
+                if (buffer_search.match_found)
+                {
+                    vkCmdCopyBuffer(
+                        frame->command,
+                        staging_buffer,
+                        x_transfer->destination_buffer,
+                        1,
+                        &copy_region
+                    );
+
+                    // NOTE: I guess we need a seperate barrier depending on the memory object?
+                    VkBufferMemoryBarrier transfer_barrier {
+                        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                        .pNext = nullptr,
+                        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                        // TODO: What is the destination mask meant to be?
+                        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                        // TODO: Revise if the queue family changes
+                        .srcQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
+                        .dstQueueFamilyIndex = u32(g_vulkan->graphics_queue_family),
+                        .buffer = x_transfer->destination_buffer,
+                        .offset = copy_region.dstOffset,
+                        .size = copy_region.size
+                    };
+                    vkCmdPipelineBarrier(
+                        frame->command,
+                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                        // VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT is depreceated aparently
+                        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        // TODO: Investigate what dependency bits to use
+                        0,
+                        0, nullptr,
+                        1, &transfer_barrier,
+                        0, nullptr
+                    );
+                }
+                break;
+            }
+            case e_vulkan_memory_object::image:
+            {
+                auto image_result = g_vulkan->images.linear_search(
+                    [image_id = x_transfer->destination_image_]( vulkan_image& arg_ ) {
+                        return (arg_.id == image_id) && arg_.id.valid(); } );
+                vulkan_image* vk_image = image_result.match;
+                if (vk_image == nullptr || vk_image->size.x < 1 || vk_image->size.y < 1) { continue; }
+
+                v2_f32 image_size = vk_image->size;
+                VkBufferImageCopy copy_region {
+                    .bufferOffset = static_cast<u64>(x_transfer->position),
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {
+                        // TODO: I don't unerstand what this flag is
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = 0,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1
+                    },
+                    .imageOffset = { 0, 0, 0 },
+                    .imageExtent { u32(image_size.x), u32(image_size.y), u32(1) }
+                };
+
+                if (buffer_search.match_found)
+                {
+
+                    VkImageMemoryBarrier copy_barrier = {
+                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        // no prior access needed for present → transfer
+                        .srcAccessMask       = 0,
+                        // TODO: No idea what access mask to use
+                        .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
+                        // or UNDEFINED on first acquire
+                        .oldLayout           = vk_image->platform_layout,
+                        // Make it available to use now
+                        .newLayout           = vk_image->platform_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        .image               = vk_image->platform_image,
+                        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+                    };
+
+                    vkCmdPipelineBarrier(
+                        frame->command,
+                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0,
+                        0, nullptr,
+                        0, nullptr,
+                        1, &copy_barrier
+                    );
+                    vkCmdCopyBufferToImage(
+                        frame->command,
+                        staging_buffer,
+                        vk_image->platform_image,
+                        vk_image->platform_layout,
+                        1,
+                        &copy_region
+                    );
+
+                }
+                break;
+            }
+            default: break;
+        }
+    }
+    /* The memory transfer queue isn't strictly bound to a frame... and I don't
+       know if it will ever need to be...  but it should be safe to reset each
+       time because its passed to the command buffer to save the state... and it
+       only needs to be done once...
+
+       WARNING: HOWEVER, you do have to synchronize with a barrier before
+       starting a new transfer
+
+       NOTE: I keep on moving this because of issues with resetting it too early
+       and the more time I relocate it the more I think my current Vulkan
+       organization is wrong in some way
+
+       NOTE: It doesn't actually have to be reset here, it just needs to be
+       reset when all the transfers are done. */
+    // Reset everyting to do with per-frame transfers
+    g_vulkan->transfer.transfer_queue.reset();
+    // Need to reset used position too
+    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
+        arg.head_size = 0; });
 }
 
 }
