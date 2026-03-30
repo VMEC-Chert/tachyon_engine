@@ -1706,7 +1706,10 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         return false;
     }
 
+    // Image is good, we finish filling in all the data
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
+    image->size = v2_f32{ f32(arg->image.size.x), f32(arg->image.size.y)};
+
 
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
 
@@ -3148,7 +3151,7 @@ PROC vulkan_start_frame() -> void
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         // no prior access needed for present → transfer
                         .srcAccessMask       = 0,
-                        .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+                        .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
                         // or UNDEFINED on first acquire
                         .oldLayout           = vk_image->platform_layout,
                         // Make it available to use now
@@ -3333,6 +3336,8 @@ PROC vulkan_start_frame() -> void
         };
         vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
         draw_image->resource_update_timestamp = time_now_ns();
+
+        vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
 
     }
 
