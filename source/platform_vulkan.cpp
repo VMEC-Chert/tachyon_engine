@@ -1805,7 +1805,8 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
 
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
-        sizeof( frame_general_uniform),
+        // I think these are aligned to 16 byte boundaries?
+        memory_align( sizeof( frame_general_uniform), 16),
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
     fresult allocate_ok = vulkan_memory_allocate_buffer(
@@ -1819,9 +1820,10 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     arg->blit_uniforms.resize( blit_uniforms_n );
     arg->blit_uniforms_buffer = vulkan_buffer_create(
         "ui_blit_uniform",
-        sizeof( vulkan_ui_blit_uniform ) * blit_uniforms_n,
+        memory_align( sizeof( vulkan_ui_blit_uniform ) 16 )* blit_uniforms_n,
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
+    vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->blit_uniforms_buffer );
 
     // TODO: Delete me
     // vulkan_memory_block& uniform_block = vulkan_memory_get_block(
@@ -1943,11 +1945,18 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
         vulkan_buffer new_buffer = vulkan_buffer_create(
             "buffer_transfer", context->staging_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         );
-        // NOTE: Typical flags for BAR accessible staging buffer, not relevant for iGPUs.
-
+        /* NOTE: Typical flags for BAR accessible staging buffer, not relevant for iGPUs.
+           NOTE: We only need BAR accessible memory for fast path copies. Just upload
+           through host memory for slow path, its more robust. We already set up for that anyway.
+           NOTE: We DO ned it to be host visible though, at the bare minimum
+           NOTE: having HOST_COHERENT is just a convenience, just means we don't have
+           to explicitly flush */
+        // new_buffer.memory_flags = (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        //                            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+        //                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         new_buffer.memory_flags = (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
         new_buffer.transfer_buffer = true;
         fresult allocate_ok = vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &new_buffer );
 
@@ -3151,7 +3160,8 @@ PROC vulkan_start_frame() -> void
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         // no prior access needed for present → transfer
                         .srcAccessMask       = 0,
-                        .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+                        // TODO: No idea what access mask to use
+                        .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
                         // or UNDEFINED on first acquire
                         .oldLayout           = vk_image->platform_layout,
                         // Make it available to use now
@@ -3339,6 +3349,60 @@ PROC vulkan_start_frame() -> void
 
         vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
 
+    }
+
+    // Update all descriptors
+    auto blit_uniform_bad = vulkan_transfer_queue_buffer(
+        &g_vulkan->transfer,
+        &frame->blit_uniforms_buffer,
+        frame->blit_uniforms.size() * sizeof( vulkan_ui_blit_uniform ),
+        0
+    );
+    if ( ! blit_uniform_bad.error)
+    {
+        memory_copy<vulkan_ui_blit_uniform>(
+            blit_uniform_bad.value.data, frame->blit_uniforms.data, frame->blit_uniforms.size() );
+    }
+
+    auto blit_search = frame->resources.resources.linear_search(
+        [blit_pipeline = g_vulkan->ui_blit_pipeline.id]( vulkan_resources& arg ) {
+            return arg.pipeline == blit_pipeline; });
+    if (blit_search.match_found)
+    {
+        vulkan_resources* resources = blit_search.match;
+        array<VkWriteDescriptorSet> write_args;
+        i64 sets_n = resources->sets.size();
+        write_args.change_allocation( g_thread->scratch, sets_n + 16 );
+        write_args.resize( sets_n );
+        resources->sets.map_procedure_indexed(
+            [buffer = frame->blit_uniforms_buffer, &write_args]( auto& set, i64 i ) {
+                // NOTE: Using stack memory here would fall out of scope when the function loop ends
+                // and leave corrupted data in VkWriteDescriptorSet
+                VkDescriptorBufferInfo* buffer_args =
+                    g_thread->scratch->allocate<VkDescriptorBufferInfo>( 1 );
+                 *buffer_args = {
+                    .buffer = buffer.buffer,
+                    .offset = 0,
+                    .range = buffer.size
+                };
+
+                VkWriteDescriptorSet blit_uniform_args {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext = nullptr,
+                    .dstSet = set,
+                    .dstBinding = 0,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .pImageInfo = nullptr,
+                    .pBufferInfo = buffer_args,
+                    .pTexelBufferView = nullptr
+                };
+                write_args[i] = blit_uniform_args;
+            });
+        // Batch update the descriptors
+        vkUpdateDescriptorSets(
+            g_vulkan->logical_device, write_args.size(), write_args.data, 0, nullptr );
     }
 
     TracyCZoneEnd( zone_setup_frame );
@@ -3607,8 +3671,13 @@ PROC vulkan_ui_blit_command_update_data(
             {
                 i32 acquired_uniform = frame->blit_uniforms_used++;
                 draw_command->uniform_index = acquired_uniform;
+                // This might look strange but I'm planning on making this generic in future
+                // So thinking about the code in terms of void pointers is useful.
                 auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
-                uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+                auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+                uniform_data.size = draw_image->size;
+                uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
+                                              g_render->ui_camera.sensor_size.y };
             }
             break;
         }

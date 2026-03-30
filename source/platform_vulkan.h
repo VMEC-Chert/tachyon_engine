@@ -33,8 +33,10 @@ struct vulkan_ui_blit_uniform
 {
     matrix transform = matrix::one();
     /* Image size in arbitrary coordinates. Will use screenspace if transform is normal */
-    v2 size;
-    v4 tint;
+    v2_f32 draw_size;
+    v2_f32 size;
+    v4_f32 tint;
+    v2_f32 surface_size;
 };
 
 struct vulkan_ui_blit_push
@@ -294,6 +296,9 @@ struct vulkan_image
     uid associated_image;
     VkImage platform_image;
     v2_f32 size;
+    // TODO: Temporary
+    v2_f32 draw_size;
+    transform_3d transform;
     time_monotonic_ns update_timestamp = 0;
     /** When the DescriptorSet was last updated.
 

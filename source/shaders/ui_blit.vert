@@ -3,8 +3,11 @@
 struct vulkan_ui_blit_uniform
 {
     mat4 transform;
-    vec2 size;
+    /** May be scaled */
+    vec2 draw_size;
+    vec2 _pad_0;
     vec4 tint;
+    vec2 surface_size;
 };
 
 layout(push_constant) uniform push_t
@@ -14,7 +17,7 @@ layout(push_constant) uniform push_t
 
 layout(std140, binding = 0) uniform vulkan_ui_blit_push {
     // NOTE: Sigh. Hardcoed size
-    vulkan_ui_blit_uniform data[2000];
+    vulkan_ui_blit_uniform data[4000];
 } globals;
 
 layout(location = 4) out vec2 uv_coord;
@@ -35,6 +38,10 @@ void main()
 {
     vulkan_ui_blit_uniform global = globals.data[ push.uniform_index ];
     int vertex_id = gl_VertexIndex;
-    gl_Position = vec4( vertexes[ vertex_id ], 1.0 );
+    vec4 vert = vec4( vertexes[ vertex_id ], 1.0 );
+    // Remap draw_size into into NDC coordinates and rescale to draw_size
+    vert.x = vert.x / global.surface_size.x * global.draw_size.y;
+    vert.y = vert.y / global.surface_size.y * global.draw_size.y;
+    gl_Position = vert;
     uv_coord = uvs[ vertex_id ];
 }

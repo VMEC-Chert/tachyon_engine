@@ -1,7 +1,27 @@
 #version 430 core
 
 // SECTION: Shader Inputs
-layout(std140, binding = 0) uniform stub_uniform { float a;};
+
+struct vulkan_ui_blit_uniform
+{
+    mat4 transform;
+    /** May be scaled */
+    vec2 draw_size;
+    vec2 _pad_0;
+    vec4 tint;
+    vec2 surface_size;
+};
+
+layout(push_constant) uniform push_t
+{
+    int uniform_index;
+} push;
+
+layout(std140, binding = 0) uniform vulkan_ui_blit_push {
+    // NOTE: Sigh. Hardcoed size
+    vulkan_ui_blit_uniform data[4000];
+} globals;
+
 layout(binding = 1) uniform sampler2D tex;
 
 layout(location = 4) in vec2 uv_coord;
