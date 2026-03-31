@@ -739,7 +739,7 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         {
             // Generic data uniform
             .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             // if it's an array of resources we're sending to the shader.
             .descriptorCount = 1,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1820,8 +1820,8 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     arg->blit_uniforms.resize( blit_uniforms_n );
     arg->blit_uniforms_buffer = vulkan_buffer_create(
         "ui_blit_uniform",
-        memory_align( sizeof( vulkan_ui_blit_uniform ) 16 )* blit_uniforms_n,
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+        memory_align( sizeof( vulkan_ui_blit_uniform ), 16 )* blit_uniforms_n,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->blit_uniforms_buffer );
 
@@ -2109,6 +2109,10 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         // update_image = true; // DEBUG: Force update every time
         if (update_image)
         {
+            // Update copies data first
+            vk_draw_image->draw_size = arg->draw_region.size;
+            vk_draw_image->position = arg->draw_region.position;
+
             auto queue_bad = vulkan_transfer_queue_image(
                 &g_vulkan->transfer, vk_draw_image, current_image->image.size_bytes(), 0 );
             dynamic_span<void> image_stage = queue_bad.value;
@@ -2510,6 +2514,8 @@ PROC vulkan_init() -> fresult
         // for multisampling support
         .sampleRateShading = true,
         // .logicOp = true
+        // Enable storage buffers
+        .vertexPipelineStoresAndAtomics = true
     };
 
     // Query features supported by the device
@@ -2802,6 +2808,10 @@ PROC vulkan_init() -> fresult
             .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
         },
         {
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
+        },
+        {
             .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             .descriptorCount = u32(g_vulkan->frames_inflight_count * 8000)
         },
@@ -2900,6 +2910,7 @@ PROC vulkan_frame_reset( vulkan_frame* frame ) -> void
     frame->draw_queue_image.reset();
     frame->draw_queue_mesh = g_render->draw_queue_mesh;
     frame->draw_queue_image = g_render->draw_queue_image;
+    frame->blit_uniforms_used = 0;
 
     // Reset resource allocations
     frame->resources.resources.map_procedure( [](vulkan_resources& arg) {
@@ -3068,8 +3079,8 @@ PROC vulkan_start_frame() -> void
     // -- Start recording into first subpass.--
     // This is started after beginning a command buffer.
 
-
-    vulkan_command_execute_transfers( g_vulkan->transfer, frame );
+    // NOTE: Start recording memory transfers before we start any rendering
+    vulkan_command_execute_transfers( &g_vulkan->transfer, frame );
 
     // SECTION: Update descriptors for drawn objects
     for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
@@ -3248,7 +3259,7 @@ PROC vulkan_start_frame() -> void
                     .dstBinding = 0,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
-                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                     .pImageInfo = nullptr,
                     .pBufferInfo = buffer_args,
                     .pTexelBufferView = nullptr
@@ -3259,6 +3270,9 @@ PROC vulkan_start_frame() -> void
         vkUpdateDescriptorSets(
             g_vulkan->logical_device, write_args.size(), write_args.data, 0, nullptr );
     }
+    // Execute any remaining transfers again to make stuff ready for this frame
+    vulkan_command_execute_transfers( &g_vulkan->transfer, frame );
+
 
     TracyCZoneEnd( zone_setup_frame );
     vulkan_command_draw( frame );
@@ -3521,7 +3535,7 @@ PROC vulkan_ui_blit_command_update_data(
             vulkan_image* draw_image = draw_command->draw_image;
             if (draw_command == nullptr) { return; }
 
-            bool out_of_uniforms = (frame->blit_uniforms.size() >= pipeline->uniform_count);
+            bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
             if ( ! out_of_uniforms)
             {
                 i32 acquired_uniform = frame->blit_uniforms_used++;
@@ -3531,6 +3545,8 @@ PROC vulkan_ui_blit_command_update_data(
                 auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
                 auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
                 uniform_data.size = draw_image->size;
+                uniform_data.draw_size = draw_image->size;
+                uniform_data.position = draw_image->position;
                 uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
                                               g_render->ui_camera.sensor_size.y };
             }
@@ -3543,11 +3559,9 @@ PROC vulkan_ui_blit_command_update_data(
     }
 }
 
-vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame )
-
+PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan_frame* frame )
+    -> fresult
 {
-    // SECTION: Start recording memory transfers before we start any rendering
-
     vulkan_transfer* x_transfer = nullptr;
     vulkan_transfer_buffer* x_transfer_buffer = nullptr;
     for (i64 i=0; i < g_vulkan->transfer.transfer_queue.size(); ++i)
@@ -3634,7 +3648,10 @@ vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame
 
                 if (buffer_search.match_found)
                 {
-
+                    VkImageLayout prev_layout = vk_image->platform_layout;
+                    VkImageLayout restore_layout = prev_layout;
+                    if (prev_layout == VK_IMAGE_LAYOUT_UNDEFINED)
+                    {   restore_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; }
                     VkImageMemoryBarrier copy_barrier = {
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         // no prior access needed for present → transfer
@@ -3642,7 +3659,7 @@ vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame
                         // TODO: No idea what access mask to use
                         .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
                         // or UNDEFINED on first acquire
-                        .oldLayout           = vk_image->platform_layout,
+                        .oldLayout           = prev_layout,
                         // Make it available to use now
                         .newLayout           = vk_image->platform_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                         .image               = vk_image->platform_image,
@@ -3666,6 +3683,32 @@ vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame
                         vk_image->platform_layout,
                         1,
                         &copy_region
+                    );
+
+                    // Restore previous layout
+                    VkImageMemoryBarrier restore_barrier = {
+                        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                        // no prior access needed for present → transfer
+                        .srcAccessMask       = 0,
+                        // TODO: No idea what access mask to use
+                        .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
+                        // or UNDEFINED on first acquire
+                        .oldLayout           = vk_image->platform_layout,
+                        // Make it available to use now
+                        .newLayout           = vk_image->platform_layout = restore_layout,
+                        .image               = vk_image->platform_image,
+                        .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+                    };
+
+                    vkCmdPipelineBarrier(
+                        frame->command,
+                        // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        0,
+                        0, nullptr,
+                        0, nullptr,
+                        1, &restore_barrier
                     );
 
                 }
@@ -3693,6 +3736,7 @@ vulkan_command_execute_transfers( vulkan_transfer* transfer, vulkan_frame* frame
     // Need to reset used position too
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
         arg.head_size = 0; });
+    return false;
 }
 
 }

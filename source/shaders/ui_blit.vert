@@ -2,12 +2,14 @@
 
 struct vulkan_ui_blit_uniform
 {
+    /** This doesn't make sense for the current API because we're working in simple XY coordinates */
     mat4 transform;
     /** May be scaled */
     vec2 draw_size;
-    vec2 _pad_0;
-    vec4 tint;
+    vec2 size;
+    vec2 position;
     vec2 surface_size;
+    vec4 tint;
 };
 
 layout(push_constant) uniform push_t
@@ -15,9 +17,8 @@ layout(push_constant) uniform push_t
     int uniform_index;
 } push;
 
-layout(std140, binding = 0) uniform vulkan_ui_blit_push {
-    // NOTE: Sigh. Hardcoed size
-    vulkan_ui_blit_uniform data[4000];
+layout(std140, binding = 0) buffer vulkan_ui_blit_push {
+    vulkan_ui_blit_uniform data[];
 } globals;
 
 layout(location = 4) out vec2 uv_coord;

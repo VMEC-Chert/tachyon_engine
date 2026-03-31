@@ -29,14 +29,17 @@ enum class e_vulkan_memory_object : i32
     image
 };
 
-struct vulkan_ui_blit_uniform
+/** Uniforms must be 16 byte aligned when std140 (OpenGL and Vulkan < 1.2) */
+struct alignas(16) vulkan_ui_blit_uniform
 {
     matrix transform = matrix::one();
     /* Image size in arbitrary coordinates. Will use screenspace if transform is normal */
     v2_f32 draw_size;
     v2_f32 size;
-    v4_f32 tint;
+    v2_f32 position;
     v2_f32 surface_size;
+    // 16 +8+8 +8+8 is 16 byte aligned
+    v4_f32 tint;
 };
 
 struct vulkan_ui_blit_push
@@ -296,8 +299,10 @@ struct vulkan_image
     uid associated_image;
     VkImage platform_image;
     v2_f32 size;
-    // TODO: Temporary
+    // TODO: These two are temporary
     v2_f32 draw_size;
+    v2_f32 position;
+
     transform_3d transform;
     time_monotonic_ns update_timestamp = 0;
     /** When the DescriptorSet was last updated.
@@ -606,6 +611,9 @@ PROC vulkan_draw_command_acquire_resource(
 PROC vulkan_ui_blit_command_update_data(
     vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
     -> void;
+
+PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan_frame* frame )
+    -> fresult;
 
 extern vulkan_context* g_vulkan;
 
