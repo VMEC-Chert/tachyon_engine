@@ -350,7 +350,7 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
     raster_args.lineWidth = 1.0f;
     raster_args.cullMode = VK_CULL_MODE_BACK_BIT;
     // TODO: TEST no cull mode
-    raster_args.cullMode = VK_CULL_MODE_NONE;
+    // raster_args.cullMode = VK_CULL_MODE_NONE;
     raster_args.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster_args.depthBiasEnable = VK_FALSE;
     raster_args.depthBiasConstantFactor = 0.0f;         // Optional
@@ -628,7 +628,7 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     raster_args.lineWidth = 1.0f;
     raster_args.cullMode = VK_CULL_MODE_BACK_BIT;
     // TODO: TEST no cull mode
-    raster_args.cullMode = VK_CULL_MODE_NONE;
+    // raster_args.cullMode = VK_CULL_MODE_NONE;
     raster_args.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster_args.depthBiasEnable = VK_FALSE;
     raster_args.depthBiasConstantFactor = 0.0f;         // Optional
@@ -681,7 +681,8 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD; // Optional
     color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_SUBTRACT; // Optional
+    // TODO: Previously OP_SUBTRACT, testing
+    color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo color_blend_args{};
     color_blend_args.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -1108,6 +1109,8 @@ PROC vulkan_buffer_create(
     {   VULKAN_ERRORF( "Failed to create buffer '{}'", name );
         return result;
     }
+    VULKAN_LOGF( "Created buffer: '{}' size: {} Usage Flags: {}",
+                 name, size, string_VkBufferUsageFlags(type) );
     result.id = uuid_generate(); // Valid objects have a non-zero UUID
     vulkan_label_object( (u64)result.buffer, VK_OBJECT_TYPE_BUFFER, name );
     g_vulkan->buffers.push_tail( result );
@@ -1820,7 +1823,7 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
     arg->blit_uniforms.resize( blit_uniforms_n );
     arg->blit_uniforms_buffer = vulkan_buffer_create(
         "ui_blit_uniform",
-        memory_align( sizeof( vulkan_ui_blit_uniform ), 16 )* blit_uniforms_n,
+        sizeof( vulkan_ui_blit_uniform )* blit_uniforms_n,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->blit_uniforms_buffer );
@@ -1924,6 +1927,9 @@ PROC vulkan_init_pipelines() -> void
 
 PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult
 {
+    // Set static size for contexts to reduce reference invalidation bugs
+    arg->buffers.change_allocation( 20 );
+    arg->transfer_queue.change_allocation( 2000 );
     return true;
 }
 
@@ -2005,12 +2011,12 @@ PROC vulkan_transfer_find_suitible_buffer( vulkan_transfer_context* context, i64
 PROC vulkan_transfer_queue_buffer(
     vulkan_transfer_context* context,
     vulkan_buffer* buffer,
-    i64 size,
+    i64 buffer_size,
     i64 buffer_offset
 ) -> monad< dynamic_span<void> >
 {
     monad< dynamic_span<void> > result;
-    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, size );
+    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, buffer_size );
     vulkan_transfer_buffer* transfer_buffer = transfer_search.match;
     if (transfer_buffer == nullptr)
     {   result.error = true;
@@ -2020,7 +2026,7 @@ PROC vulkan_transfer_queue_buffer(
     vulkan_transfer* new_transfer = &context->transfer_queue.push_tail({
             .buffer_index = transfer_search.index,
             .position = transfer_buffer->head_size,
-            .size = size,
+            .size = buffer_size,
             .buffer_offset = buffer_offset,
             .destination = e_vulkan_memory_object::buffer,
             .destination_buffer = buffer->buffer,
@@ -2029,10 +2035,10 @@ PROC vulkan_transfer_queue_buffer(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    // VULKAN_LOG( "Queued Buffer GPU trasnfer" )
-    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-    //              new_transfer->buffer_index, new_transfer->position,
-    //              new_transfer->size, new_transfer->buffer_offset );
+    VULKAN_LOG( "Queued Buffer GPU transfer" )
+    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+                 new_transfer->buffer_index, new_transfer->position,
+                 new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -2044,12 +2050,12 @@ PROC vulkan_transfer_queue_buffer(
 PROC vulkan_transfer_queue_image(
     vulkan_transfer_context* context,
     vulkan_image* image,
-    i64 size,
+    i64 buffer_size,
     i64 buffer_offset
 ) -> monad< dynamic_span<void> >
 {
     monad< dynamic_span<void> > result;
-    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, size );
+    auto transfer_search = vulkan_transfer_find_suitible_buffer( context, buffer_size );
     vulkan_transfer_buffer* transfer_buffer = transfer_search.match;
     if (transfer_buffer == nullptr)
     {   result.error = true;
@@ -2059,7 +2065,7 @@ PROC vulkan_transfer_queue_image(
     vulkan_transfer* new_transfer = &context->transfer_queue.push_tail({
             .buffer_index = transfer_search.index,
             .position = transfer_buffer->head_size,
-            .size = size,
+            .size = buffer_size,
             .buffer_offset = buffer_offset,
             .destination = e_vulkan_memory_object::image,
             .destination_buffer = VK_NULL_HANDLE,
@@ -2068,10 +2074,10 @@ PROC vulkan_transfer_queue_image(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    // VULKAN_LOG( "Queued Image GPU transfer" )
-    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-    //              new_transfer->buffer_index, new_transfer->position,
-    //              new_transfer->size, new_transfer->buffer_offset );
+    VULKAN_LOG( "Queued Image GPU transfer" )
+    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+                 new_transfer->buffer_index, new_transfer->position,
+                 new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -3080,7 +3086,9 @@ PROC vulkan_start_frame() -> void
     // This is started after beginning a command buffer.
 
     // NOTE: Start recording memory transfers before we start any rendering
-    vulkan_command_execute_transfers( &g_vulkan->transfer, frame );
+    // TODO: I think I made a bad assumption that the transfer executes immediately, it doesn't
+    // It gets executed when the queue submit happens, which means ordering like this isn't an issue.
+    // vulkan_command_execute_transfers( &g_vulkan->transfer, frame );
 
     // SECTION: Update descriptors for drawn objects
     for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
@@ -3164,7 +3172,7 @@ PROC vulkan_start_frame() -> void
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             // no prior access needed for present → transfer
             .srcAccessMask       = 0,
-            .dstAccessMask       = VK_ACCESS_SHADER_READ_BIT,
+            .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
             // or UNDEFINED on first acquire
             .oldLayout           = draw_image->platform_layout,
             // We're writing so use transfer destination layout
@@ -3178,7 +3186,7 @@ PROC vulkan_start_frame() -> void
             frame->command,
             // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
             // NOTE: Required flag when doing a barrier/transition inside a render pass
             0x0,
             0, nullptr,
@@ -3226,8 +3234,9 @@ PROC vulkan_start_frame() -> void
     );
     if ( ! blit_uniform_bad.error)
     {
-        memory_copy<vulkan_ui_blit_uniform>(
-            blit_uniform_bad.value.data, frame->blit_uniforms.data, frame->blit_uniforms.size() );
+        dynamic_span<void> transfer = blit_uniform_bad.value;
+        // Just automatically truncate to the buffer size
+        memory_copy_raw( transfer.data, frame->blit_uniforms.data, transfer.size );
     }
 
     auto blit_search = frame->resources.resources.linear_search(
@@ -3544,8 +3553,9 @@ PROC vulkan_ui_blit_command_update_data(
                 // So thinking about the code in terms of void pointers is useful.
                 auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
                 auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+                // TODO: hardcoded draw scale whilst trying to figure out API
                 uniform_data.size = draw_image->size;
-                uniform_data.draw_size = draw_image->size;
+                uniform_data.draw_size = 1.0;
                 uniform_data.position = draw_image->position;
                 uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
                                               g_render->ui_camera.sensor_size.y };
@@ -3689,9 +3699,9 @@ PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan
                     VkImageMemoryBarrier restore_barrier = {
                         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                         // no prior access needed for present → transfer
-                        .srcAccessMask       = 0,
+                        .srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
                         // TODO: No idea what access mask to use
-                        .dstAccessMask       = (VK_ACCESS_MEMORY_READ_BIT),
+                        .dstAccessMask       = (VK_ACCESS_SHADER_READ_BIT),
                         // or UNDEFINED on first acquire
                         .oldLayout           = vk_image->platform_layout,
                         // Make it available to use now
@@ -3703,8 +3713,8 @@ PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan
                     vkCmdPipelineBarrier(
                         frame->command,
                         // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
                         0,
                         0, nullptr,
                         0, nullptr,
@@ -3736,6 +3746,7 @@ PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan
     // Need to reset used position too
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
         arg.head_size = 0; });
+    VULKAN_LOG( "Executed GPU transfers" );
     return false;
 }
 

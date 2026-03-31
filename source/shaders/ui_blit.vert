@@ -5,7 +5,7 @@ struct vulkan_ui_blit_uniform
     /** This doesn't make sense for the current API because we're working in simple XY coordinates */
     mat4 transform;
     /** May be scaled */
-    vec2 draw_size;
+    vec2 draw_scale;
     vec2 size;
     vec2 position;
     vec2 surface_size;
@@ -41,8 +41,11 @@ void main()
     int vertex_id = gl_VertexIndex;
     vec4 vert = vec4( vertexes[ vertex_id ], 1.0 );
     // Remap draw_size into into NDC coordinates and rescale to draw_size
-    vert.x = vert.x / global.surface_size.x * global.draw_size.y;
-    vert.y = vert.y / global.surface_size.y * global.draw_size.y;
+    vert.x = (vert.x / global.surface_size.x * (global.size.x + global.position.x)) *
+        global.draw_scale.x;
+    vert.y = (vert.y / global.surface_size.y * (global.size.y + global.position.y)) *
+        global.draw_scale.y;
+
     gl_Position = vert;
     uv_coord = uvs[ vertex_id ];
 }
