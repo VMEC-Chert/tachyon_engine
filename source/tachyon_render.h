@@ -107,6 +107,7 @@ struct render_image
     /** Changed API, it is now draw location / size. */
     box_2d draw_region;
     time_monotonic_ns write_timestamp = time_now_ns();
+    i64 write_version = 0;
 };
 
 struct render_args

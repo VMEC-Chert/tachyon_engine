@@ -66,8 +66,9 @@ void main()
     vec2 uv = quad_uvs[ vertex_id ];
 
     // Remap draw_size into into -1 - 1.0 (2 length) NDC coordinates and rescale to draw_size
-    float x_ratio = (2.0 / global.surface_size.x);
-    float y_ratio = (2.0 / global.surface_size.y);
+    // NOTE: I thought this was supposed to 1 / a but this seems to give the wrong result
+    float x_ratio = (1.0 / global.surface_size.x);
+    float y_ratio = (1.0 / global.surface_size.y);
     // Have to translate last to stop scaling pushing around the triangles
     // NOTE: Flip y so we have normal y up coordinates
     float x_scaled = vert.x * (x_ratio * global.size.x);
