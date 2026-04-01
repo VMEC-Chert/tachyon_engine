@@ -103,6 +103,7 @@ struct render_image
     image<rgba> image;
     /** The subportion of the image that will be drawn as coordinates from the bottom left XY */
     box_2d clip_region;
+    box_2d draw_box;
     /** Changed API, it is now draw location / size. */
     box_2d draw_region;
     time_monotonic_ns write_timestamp = time_now_ns();

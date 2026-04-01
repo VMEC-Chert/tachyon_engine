@@ -2035,10 +2035,10 @@ PROC vulkan_transfer_queue_buffer(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    VULKAN_LOG( "Queued Buffer GPU transfer" )
-    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-                 new_transfer->buffer_index, new_transfer->position,
-                 new_transfer->size, new_transfer->buffer_offset );
+    // VULKAN_LOG( "Queued Buffer GPU transfer" )
+    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+    //              new_transfer->buffer_index, new_transfer->position,
+    //              new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -2074,10 +2074,10 @@ PROC vulkan_transfer_queue_image(
     // Increase transfer buffer used size by size of the buffer
     // TODO: Does this need to be an aligned transfer?
     transfer_buffer->head_size += new_transfer->size + context->redzone_bytes;
-    VULKAN_LOG( "Queued Image GPU transfer" )
-    VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
-                 new_transfer->buffer_index, new_transfer->position,
-                 new_transfer->size, new_transfer->buffer_offset );
+    // VULKAN_LOG( "Queued Image GPU transfer" )
+    // VULKAN_LOGF( "transfer_buffer_id: {} position: {} size: {} destination offset: {}",
+                 // new_transfer->buffer_index, new_transfer->position,
+                 // new_transfer->size, new_transfer->buffer_offset );
 
     // Return the pointer to the tranfer's location in the mapped buffer
     result.value.data = transfer_buffer->mapped_data + new_transfer->position;
@@ -2117,7 +2117,8 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         {
             // Update copies data first
             vk_draw_image->draw_size = arg->draw_region.size;
-            vk_draw_image->position = arg->draw_region.position;
+            // TODO: Need to make it use draw box size too
+            vk_draw_image->position = arg->draw_box.position;
 
             auto queue_bad = vulkan_transfer_queue_image(
                 &g_vulkan->transfer, vk_draw_image, current_image->image.size_bytes(), 0 );
@@ -3746,7 +3747,7 @@ PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan
     // Need to reset used position too
     g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
         arg.head_size = 0; });
-    VULKAN_LOG( "Executed GPU transfers" );
+    // VULKAN_LOG( "Executed GPU transfers" );
     return false;
 }
 

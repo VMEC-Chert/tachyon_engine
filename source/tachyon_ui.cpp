@@ -50,6 +50,9 @@ namespace tyon
         entity_init<ui_drawable>( test_text );
         sdl_render_text( test_text );
         test_text->image_.name = "quick_brown_fox";
+        test_text->image_.draw_box.size = { f32(test_text->image_.image.size.y),
+                                            f32(test_text->image_.image.size.y) };
+        test_text->image_.draw_box.position = { 500.0, 500.0 };
         test_text->image_.id = uuid_generate();
 
         entity_init( test_text );
