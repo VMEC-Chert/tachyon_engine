@@ -2116,7 +2116,7 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         if (update_image)
         {
             // Update copies data first
-            vk_draw_image->draw_size = arg->draw_region.size;
+            vk_draw_image->draw_size = arg->draw_box.size;
             // TODO: Need to make it use draw box size too
             vk_draw_image->position = arg->draw_box.position;
 
@@ -3452,7 +3452,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                 );
 
                 // Do actual draw
-                vkCmdDraw( frame->command, 3, 1, 0, 0 );
+                vkCmdDraw( frame->command, 6, 1, 0, 0 );
                 break;
             }
             default: break;
