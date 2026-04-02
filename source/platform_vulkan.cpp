@@ -2113,13 +2113,14 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         bool dirty_buffer = (current_image->write_timestamp > vk_draw_image->update_timestamp);
         bool update_image = dirty_buffer;
         // update_image = true; // DEBUG: Force update every time
+
+        // We can update this every time its just display configuration data
+        vk_draw_image->draw_size = arg->draw_box.size;
+        vk_draw_image->position = arg->draw_box.position;
+
         if (update_image)
         {
             // Update copies data first
-            vk_draw_image->draw_size = arg->draw_box.size;
-            // TODO: Need to make it use draw box size too
-            vk_draw_image->position = arg->draw_box.position;
-
             auto queue_bad = vulkan_transfer_queue_image(
                 &g_vulkan->transfer, vk_draw_image, current_image->image.size_bytes(), 0 );
             dynamic_span<void> image_stage = queue_bad.value;
