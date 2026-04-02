@@ -3259,7 +3259,7 @@ PROC vulkan_start_frame() -> void
                  *buffer_args = {
                     .buffer = buffer.buffer,
                     .offset = 0,
-                    .range = limit<u64>(buffer.size)
+                    .range = clamp_u64(buffer.size)
                 };
 
                 VkWriteDescriptorSet blit_uniform_args {
