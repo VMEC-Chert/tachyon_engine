@@ -3294,8 +3294,9 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     vulkan_swapchain* swapchain = &g_vulkan->swapchain;
 
     // Set render pass start information
-    VkClearValue clear_value {};
-    clear_value.color = {{ 0.2f, 0.0f, 0.2f, 1.0f }};
+    VkClearValue clear_purple {{ 0.2f, 0.0f, 0.2f, 1.0f }};
+    VkClearValue clear_black {{ 0.0f, 0.0f, 0.0f, 0.0f }};
+    VkClearValue clear_value = clear_black;
     // VkClearValue clear_values[] = { clear_value, clear_value };
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3555,8 +3556,12 @@ PROC vulkan_ui_blit_command_update_data(
                 auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
                 auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
                 // TODO: hardcoded draw scale whilst trying to figure out API
+
+                auto draw_size = draw_image->draw_size;
+                f32 tolerance = 0.1;
+                bool custom_draw_size = ((draw_size.x > tolerance) && (draw_size.y > tolerance));
                 uniform_data.size = draw_image->size;
-                uniform_data.draw_size = 1.0;
+                uniform_data.draw_size = (custom_draw_size ? draw_size : draw_image->size);
                 uniform_data.position = draw_image->position;
                 uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
                                               g_render->ui_camera.sensor_size.y };

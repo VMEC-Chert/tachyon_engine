@@ -71,8 +71,8 @@ void main()
     float y_ratio = (1.0 / global.surface_size.y);
     // Have to translate last to stop scaling pushing around the triangles
     // NOTE: Flip y so we have normal y up coordinates
-    float x_scaled = vert.x * (x_ratio * global.size.x);
-    float y_scaled = vert.y * (y_ratio * global.size.y);
+    float x_scaled = vert.x * (x_ratio * global.draw_size.x);
+    float y_scaled = vert.y * (y_ratio * global.draw_size.y);
 
     float x_translated = x_scaled + (x_ratio * global.position.x);
     float y_translated = y_scaled + (y_ratio * global.position.y);

@@ -128,9 +128,6 @@ struct render_context
     /* Orthographic UI camera */
     scene_camera ui_camera;
 
-     /* TODO: You know, I'm not sure if we should store images and meshes here.
-        They're kind of very generic things and we leave subsystems to do whatever they want with.
-        Yet that kind of runs counter to them having IDs. */
     array< render_image > images;
     array< mesh > meshes;
 
@@ -151,6 +148,9 @@ PROC render_thread( render_args* args ) -> void;
 PROC render_init( render_args* args ) -> void;
 
 PROC render_destroy() -> void;
+
+/** Run before the main tick, does resetting functions and such */
+PROC render_tick_start() -> void;
 
 PROC render_tick() -> void;
 

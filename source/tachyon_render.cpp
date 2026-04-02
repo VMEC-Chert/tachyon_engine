@@ -132,7 +132,7 @@ PROC render_destroy() -> void
     vulkan_destroy();
 }
 
-PROC render_tick() -> void
+PROC render_tick_start() -> void
 {
     PROFILE_SCOPE_FUNCTION();
     // SECTION: Reset data for new frame
@@ -140,8 +140,13 @@ PROC render_tick() -> void
     g_render->draw_queue_mesh.reset();
     g_render->draw_queue_image.reset();
     // Add the permanant draws back onto the draw list
-    g_render->draw_queue_image = g_render->permanent_draw_queue_image;
+    g_render->permanent_draw_queue_image.map_procedure( []( auto& arg) {
+        g_render->draw_queue_image.push_tail( arg); });
 
+}
+
+PROC render_tick() -> void
+{
     sdl->tick();
     ui_tick();
     switch (global->render_backend)

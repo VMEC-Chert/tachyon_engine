@@ -57,7 +57,7 @@ namespace tyon
 
         entity_init( test_text );
         entity_init( text_widget );
-        g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
+        // g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
 
         TYON_LOG( "UI Initialized" );
 
@@ -71,7 +71,7 @@ namespace tyon
 
         entity_tick_all<ui_drawable>();
         // Test code
-        g_render->draw_queue_image.push_tail( &g_ui->test_image );
+        // g_render->draw_queue_image.push_tail( &g_ui->test_image );
 
         // if (ui_point_box_collision())
         f32 mouse_x = 0.0f;
