@@ -1680,7 +1680,8 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
         /** RGBA Follows endianness. This is allowed for the transfer image but not the swapchain image
 
         NOTE: Seriously? The driver just ignores this format and makes you swizzle the
-        channels manually anyway, so we have to use BGRA format for blitting */
+        channels manually anyway, so we have to use BGRA
+ format for blitting */
         .format = VK_FORMAT_B8G8R8A8_SRGB,
         .extent = VkExtent3D { u32(arg->image.size.x), u32(arg->image.size.y), 1 },
         .mipLevels = 1,
@@ -2133,7 +2134,7 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
                 // Need to copy into GPUs preferred BGRA format. We'll just borrow the staging memory.
                 image<rgba> gpu_image = current_image->image;
                 gpu_image.data = raw_pointer(image_stage.data);
-                (void)image_color_reorder_inplace<bgra>( gpu_image );
+                (void)image_color_reorder_inplace_u8_bgra_rgba( gpu_image );
                 vk_draw_image->update_timestamp = time_now_ns();
             }
         }
