@@ -2134,7 +2134,10 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
                 // Need to copy into GPUs preferred BGRA format. We'll just borrow the staging memory.
                 image<rgba> gpu_image = current_image->image;
                 gpu_image.data = raw_pointer(image_stage.data);
-                (void)image_color_reorder_inplace_u8_bgra_rgba( gpu_image );
+                // TODO: Disabled temporarily
+                if (gpu_image.format != color_format::bgra8)
+                {   (void)image_color_reorder_inplace_u8_bgra_rgba( gpu_image );}
+
                 vk_draw_image->update_timestamp = time_now_ns();
             }
         }
