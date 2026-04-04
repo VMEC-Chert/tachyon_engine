@@ -100,6 +100,9 @@ struct ui_temp_action
     fstring name;
     SDL_Scancode keyscan = SDL_SCANCODE_UNKNOWN;
     bool triggered = false;
+    i32 mouse_trigger_clicks = 0;
+    /** This is mouse button index */
+    u8 sdl_mouse_button = 0;
 };
 
 struct keybind_chain_step
@@ -308,6 +311,8 @@ struct ui_input_state
     time_date_ns mouse_update_time;
     v2_f32 mouse_delta = 0;
     v2_f32 mouse_window = 0;
+    /** NOTE: This has 2 axis because horizontal scroll is a thing. Particularly true of touchpads */
+    v2_f32 mouse_scroll = 0;
 };
 
 /** A snapshot of data take at the start of a UI tick */
