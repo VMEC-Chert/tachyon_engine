@@ -147,7 +147,6 @@ PROC render_tick_start() -> void
 
 PROC render_tick() -> void
 {
-    sdl->tick();
     ui_tick();
     switch (global->render_backend)
     {

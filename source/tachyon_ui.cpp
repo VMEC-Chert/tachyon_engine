@@ -68,6 +68,9 @@ namespace tyon
     {
         PROFILE_SCOPE_FUNCTION();
         ui_tick_start();
+        sdl->tick();
+
+        // TYON_LOG( g_ui->input.mouse_scroll.y );
 
         entity_tick_all<ui_drawable>();
         // Test code
@@ -102,6 +105,7 @@ namespace tyon
     PROC ui_tick_start() -> void
     {
         PROFILE_SCOPE_FUNCTION();
+        g_ui->input = {};
         g_ui->frame.input = g_ui->input;
     }
 

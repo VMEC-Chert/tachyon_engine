@@ -141,6 +141,7 @@ struct render_context
 };
 
 extern render_context* g_render;
+extern platform_subsystem* sdl;
 
 /** Threaded entry point */
 PROC render_thread( render_args* args ) -> void;
