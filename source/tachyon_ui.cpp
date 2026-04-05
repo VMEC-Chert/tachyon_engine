@@ -170,16 +170,19 @@ namespace tyon
         std::unique_lock _lock { g_ui->actions_lock, std::try_to_lock };
         if ( ! _lock) { return false; }
 
-        bool triggered = false;
-        g_ui->actions_bound.map_procedure( [action, &triggered](ui_temp_action& arg){
+        bool result_triggered = false;
+        g_ui->actions_bound.map_procedure( [action, &result_triggered](ui_temp_action& arg){
             if (action == arg.id && arg.triggered)
-            {   triggered = true;
-                arg.triggered = false;
+            {   result_triggered = true;
+
+                // This function does not transition state if it's a toggle state
+                if (arg.toggle_state == false)
+                {   arg.triggered = false; }
                 TYON_LOGF( "Action triggered, keycode {}, name {}",
                            SDL_GetScancodeName( arg.keyscan ), arg.name );
             }
         });
-        return triggered;
+        return result_triggered;
     }
 
 }

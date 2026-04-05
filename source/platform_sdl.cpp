@@ -239,6 +239,18 @@ namespace tyon
                     }
                     break;
                 }
+                case SDL_EVENT_KEY_UP:
+                {
+                    // NOTE: A failed lock is a missed events, we absolutely cannot miss events.
+                    std::unique_lock _lock { g_ui->actions_lock };
+                    g_ui->actions_bound.map_procedure( [key_event_ = x_event.key](ui_temp_action& arg){
+                        if (arg.keyscan == key_event_.scancode && arg.toggle_state)
+                        {   arg.triggered = false;
+                            TYON_LOGF( "Action released: '{}'", arg.name );
+                        }
+                    });
+                    break;
+                }
                 case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 {
                     SDL_MouseButtonEvent e = x_event.button;
@@ -250,13 +262,28 @@ namespace tyon
                         {
                             arg.triggered = true;
                         }
-                    });;
+                    });
+                    break;
+                }
+                case SDL_EVENT_MOUSE_BUTTON_UP:
+                {
+                    SDL_MouseButtonEvent e = x_event.button;
+                    // NOTE: A failed lock is a missed events, we absolutely cannot miss events.
+                    std::unique_lock _lock { g_ui->actions_lock };
+                    g_ui->actions_bound.map_procedure( [e](ui_temp_action& arg){
+                        if (arg.sdl_mouse_button == e.button && arg.toggle_state)
+                        {   arg.triggered = false;
+                            TYON_LOGF( "Action released: '{}'", arg.name );
+                        }
+                    });
+                    break;
                 }
                 case SDL_EVENT_MOUSE_WHEEL:
                 {
                     SDL_MouseWheelEvent e = x_event.wheel;
                     g_ui->input.mouse_scroll = v2_f32 { e.x, e.y };
                     TYON_LOGF( "SDL 2-Axis Mouse Scroll: {} {}", e.x, e.y );
+                    break;
                 }
                 case SDL_EVENT_MOUSE_MOTION:
                 {

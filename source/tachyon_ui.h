@@ -97,12 +97,19 @@ struct action
 struct ui_temp_action
 {
     uid id;
+    // Arguments
     fstring name;
     SDL_Scancode keyscan = SDL_SCANCODE_UNKNOWN;
-    bool triggered = false;
+    /** When action is triggered it will stay triggered until state is released
+
+     NOTE: Usually a keypress release */
+    bool toggle_state = false;
     i32 mouse_trigger_clicks = 0;
     /** This is mouse button index */
     u8 sdl_mouse_button = 0;
+
+    // Runtime State
+    bool triggered = false;
 };
 
 struct keybind_chain_step
