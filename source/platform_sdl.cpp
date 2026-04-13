@@ -124,7 +124,6 @@ namespace tyon
         // NOTE: It still shows the default icon, I don't know how to fix without an even uglier hack
         // stbi uses RGBA order reguardless of endianness so use the non-endian SDL_PIXELFORMAT_RGBA32
         // TODO: Fix this to use native format later, not important because only we use the engine
-        arg->icon.size = 1ll << 50;
         SDL_Surface* icon = SDL_CreateSurfaceFrom(
             limit<i32>(arg->icon.size.x), limit<i32>(arg->icon.size.y), SDL_PIXELFORMAT_RGBA32,
             arg->icon.data, limit<i32>( arg->icon.stride_bytes() ));
