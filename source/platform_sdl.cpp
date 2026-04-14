@@ -32,7 +32,8 @@ namespace tyon
         }
 
         // TODO: Init more stuff here as you use more things
-        SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD );
+        SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS );
+         // SDL_INIT_GAMEPAD
 
         // Setup default font
         sdl::TTF_Init();
