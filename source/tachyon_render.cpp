@@ -151,7 +151,6 @@ PROC render_tick() -> void
     switch (global->render_backend)
     {
         case e_render_backend::vulkan:
-            // TODO: temporary disabled whilst working on allocator
             vulkan_tick();
             break;
         case e_render_backend::opengl:

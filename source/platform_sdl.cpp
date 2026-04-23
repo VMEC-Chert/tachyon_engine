@@ -293,8 +293,8 @@ namespace tyon
                     g_ui->input.mouse_delta = v2_f32{ e.xrel, e.yrel };
                     /* timestamp, windowID, SDL_MouseID which (unique mouse id),
                           SDL_MouseButtonFlags state, x, y, xrel, yrel */
-                    TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
-                               e.x, e.y, e.xrel, e.yrel );
+                    // TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
+                               // e.x, e.y, e.xrel, e.yrel );
                     break;
                 }
                 default:

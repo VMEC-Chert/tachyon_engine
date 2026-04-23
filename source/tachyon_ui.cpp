@@ -157,6 +157,23 @@ namespace tyon
         return {};
     }
 
+    PROC ui_action_command_trigger_callback( uid action_id ) -> void
+    {
+        auto action_s = entity_search_id_array( &g_ui->actions_bound, action_id );
+        if (action_s.match_found)
+        {
+            ui_temp_action* x_action = action_s.match;
+            // Toggle state if it's a toggle state
+            if (x_action->toggle_state)
+            {   x_action->triggered = !x_action->triggered;
+            }
+            else
+            {   x_action->triggered = true; }
+            TYON_LOGF( "Command triggered action {}", x_action->name );
+
+        }
+    }
+
     PROC ui_action_create( ui_temp_action* arg ) -> uid
     {
         // Synchronize first
@@ -165,6 +182,17 @@ namespace tyon
 
         arg->id = uuid_generate();
         g_ui->actions_bound.push_tail( *arg );
+
+        // Make action invokable from command console
+        command command_1 = {
+            .type = e_command::execute,
+            .name = arg->name,
+            .description = "Not provided.",
+            .aliases = {},
+        };
+        command_1.on_trigger.assign_closure( ui_action_command_trigger_callback, arg->id );
+        command_add( &command_1 );
+
         return arg->id;
     }
 
