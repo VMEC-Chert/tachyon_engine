@@ -35,6 +35,7 @@ namespace tyon
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS );
          // SDL_INIT_GAMEPAD
 
+        // SECTION: TTF Font system setup
         // Setup default font
         sdl::TTF_Init();
 
@@ -51,6 +52,10 @@ namespace tyon
         if (g_sdl->default_font)
         {   TYON_LOG( "Created default font" );
         }
+        log_error_result( "Creating SDL TTF Default font", g_sdl->default_font == nullptr );
+
+        g_sdl->text_engine = sdl::TTF_CreateSurfaceTextEngine();
+        log_error_result( "Creating SDL TTF_TextEngine", g_sdl->text_engine == nullptr );
 
         // Enumerate video drivers
         array<fstring> video_drivers;
@@ -354,6 +359,61 @@ namespace tyon
     }
 
     PROC sdl_render_text( ui_drawable* arg ) -> fresult
+    {
+        PROFILE_SCOPE_FUNCTION();
+        text_drawable& props = arg->text;
+        SDL_Surface* text_surface {};
+        SDL_Color sdl_white = { 255, 255, 255, 255 };
+        bool text_ok = false;
+        bool text_changed = (props->text != props->previous_text);
+        i32 width {};
+        i32 height {};
+
+
+        if (text_changed)
+        {
+            props->sdl_text = sdl::TTF_CreateText(
+                g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
+        }
+        if (props.wrapped && props->sdl_text)
+        {
+            i32 wrap_pixels = 0;
+            // NOTE: zero means wrap on newline
+            bool wrap_ok = TTF_SetTextWrapWidth( props->sdl_text, wrap_pixels );
+        }
+
+        // Have to do this after setting settings like wrap length
+        if (text_changed)
+        {
+            bool size_ok = sdl::TTF_GetTextSize( props->sdl_text, &width, &height );
+            // Use BGRA format to save round trip convertion in Vulkan
+            text_surface = SDL_CreateSurface( width, height, SDL_PIXELFORMAT_BGRA8888 );
+        }
+
+        if (text_surface && size_ok)
+        {
+            props.rendered_size = { f32(width), f32(height) };
+            props.bounding_box = props.rendered_size;
+            text_ok = sdl::TTF_DrawSurfaceText( props->sdl_text, 0, 0, text_surface );
+        }
+
+        if (text_surface)
+        {
+            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_BGRA8888,
+                         "Our internal API must have changed." );
+            image<rgba> surface_view;
+            surface_view.data = raw_pointer(text_surface->pixels);
+            surface_view.size = { text_surface->w, text_surface->h };
+            surface_view.stride_bytes_ = text_surface->pitch;
+            surface_view.format = color_format::bgra8;
+
+            arg->image_.image = image_packed_from_simd( surface_view );
+            SDL_DestroySurface( text_surface );
+        }
+        return false;
+    }
+
+    PROC sdl_render_text_old( ui_drawable* arg ) -> fresult
     {
         PROFILE_SCOPE_FUNCTION();
         const text_drawable& props = arg->text;

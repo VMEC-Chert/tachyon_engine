@@ -155,6 +155,7 @@ struct text_drawable
     transform_2d transform;
     e_ui_anchor anchor = e_ui_anchor::center;
     sdl::TTF_Font* font = nullptr;
+    sdl::TTF_Text* sdl_text {};
     rgba color = rgba{.hex = 0xFFFFFF };
     rgba background_color;
     v2_f32 bounding_box;
@@ -172,6 +173,8 @@ struct text_drawable
     // LCD sub-pixel rendering can only be done if the background colour is known and uniform
     bool uniform_background_color = false;
     bool wrapped = false;
+
+    fstring previous_text = "stub";
 };
 
 struct ui_interactable

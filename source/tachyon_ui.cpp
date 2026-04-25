@@ -57,7 +57,7 @@ namespace tyon
 
         entity_init( test_text );
         entity_init( text_widget );
-        // g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
+        g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
 
         TYON_LOG( "UI Initialized" );
 

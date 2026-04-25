@@ -31,6 +31,9 @@ namespace tyon
     struct sdl_context
     {
         window* main_window = nullptr;
+        /** This is a text rendering subsystem that does font atlas
+         * caching. This is required for performant text rendering. */
+        sdl::TTF_TextEngine* text_engine;
         array<sdl_window> windows;
         sdl::TTF_Font* default_font = nullptr;
         f32 default_font_size = 16;
