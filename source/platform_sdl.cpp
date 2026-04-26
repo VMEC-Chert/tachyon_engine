@@ -362,53 +362,54 @@ namespace tyon
     {
         PROFILE_SCOPE_FUNCTION();
         text_drawable& props = arg->text;
-        SDL_Surface* text_surface {};
         SDL_Color sdl_white = { 255, 255, 255, 255 };
         bool text_ok = false;
-        bool text_changed = (props->text != props->previous_text);
+        bool text_changed = (props.text != props.previous_text);
         i32 width {};
         i32 height {};
 
 
         if (text_changed)
         {
-            props->sdl_text = sdl::TTF_CreateText(
+            props.sdl_text = sdl::TTF_CreateText(
                 g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
+            text_ok = bool(props.sdl_text);
         }
-        if (props.wrapped && props->sdl_text)
+        if (props.wrapped && props.sdl_text)
         {
             i32 wrap_pixels = 0;
             // NOTE: zero means wrap on newline
-            bool wrap_ok = TTF_SetTextWrapWidth( props->sdl_text, wrap_pixels );
+            bool wrap_ok = TTF_SetTextWrapWidth( props.sdl_text, wrap_pixels );
         }
 
         // Have to do this after setting settings like wrap length
         if (text_changed)
         {
-            bool size_ok = sdl::TTF_GetTextSize( props->sdl_text, &width, &height );
+            bool size_ok = sdl::TTF_GetTextSize( props.sdl_text, &width, &height );
             // Use BGRA format to save round trip convertion in Vulkan
-            text_surface = SDL_CreateSurface( width, height, SDL_PIXELFORMAT_BGRA8888 );
+            SDL_DestroySurface( props.surface );
+            props.surface = SDL_CreateSurface( width, height, SDL_PIXELFORMAT_BGRA8888 );
         }
 
-        if (text_surface && size_ok)
+        if (props.surface && text_ok)
         {
             props.rendered_size = { f32(width), f32(height) };
             props.bounding_box = props.rendered_size;
-            text_ok = sdl::TTF_DrawSurfaceText( props->sdl_text, 0, 0, text_surface );
+            text_ok = sdl::TTF_DrawSurfaceText( props.sdl_text, 0, 0, props.surface );
         }
 
-        if (text_surface)
+        if (props.surface)
         {
-            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_BGRA8888,
+            ERROR_GUARD( props.surface->format == SDL_PIXELFORMAT_BGRA8888,
                          "Our internal API must have changed." );
             image<rgba> surface_view;
-            surface_view.data = raw_pointer(text_surface->pixels);
-            surface_view.size = { text_surface->w, text_surface->h };
-            surface_view.stride_bytes_ = text_surface->pitch;
+            surface_view.data = raw_pointer(props.surface->pixels);
+            surface_view.size = { props.surface->w, props.surface->h };
+            surface_view.stride_bytes_ = props.surface->pitch;
             surface_view.format = color_format::bgra8;
 
             arg->image_.image = image_packed_from_simd( surface_view );
-            SDL_DestroySurface( text_surface );
+            SDL_DestroySurface( props.surface );
         }
         return false;
     }

@@ -208,10 +208,13 @@ namespace tyon
             {   result_triggered = true;
 
                 // This function does not transition state if it's a toggle state
+                // NOTE: Don't log toggle stage actions, on transitions, its juts noisy
                 if (arg.toggle_state == false)
-                {   arg.triggered = false; }
-                TYON_LOGF( "Action triggered, keycode {}, name {}",
-                           SDL_GetScancodeName( arg.keyscan ), arg.name );
+                {   arg.triggered = false;
+                    TYON_LOGF( "Action triggered, keycode {}, name {}",
+                               SDL_GetScancodeName( arg.keyscan ), arg.name );
+                }
+
             }
         });
         return result_triggered;

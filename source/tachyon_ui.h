@@ -156,6 +156,7 @@ struct text_drawable
     e_ui_anchor anchor = e_ui_anchor::center;
     sdl::TTF_Font* font = nullptr;
     sdl::TTF_Text* sdl_text {};
+    SDL_Surface* surface;
     rgba color = rgba{.hex = 0xFFFFFF };
     rgba background_color;
     v2_f32 bounding_box;
