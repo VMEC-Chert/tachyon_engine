@@ -298,6 +298,7 @@ struct vulkan_image
     uid id;
     uid associated_image;
     VkImage platform_image;
+    vec2_i64 size_;
     v2_f32 size;
     // TODO: These two are temporary
     v2_f32 draw_size;
@@ -318,6 +319,8 @@ struct vulkan_image
     /** Current tracked layout */
     VkImageLayout platform_layout;
     VkImageView platform_view;
+    i64 last_frame_used = 0;
+    bool destroyed = false;
 };
 
 
@@ -517,6 +520,7 @@ struct vulkan_context
     bool restart_vulkan = false;
     bool device_lost = false;
     i64 frames_started = 0;
+    /** Count frames completed so we know when it's safe to release resources */
     i64 frames_completed = 0;
     i64 failed_descriptor_updates = 0;
     i64 failed_draw_commands = 0;

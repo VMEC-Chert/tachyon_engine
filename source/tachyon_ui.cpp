@@ -47,17 +47,31 @@ namespace tyon
         auto text_widget = entity_allocate<ui_widget>();
         test_text->text.text = quick_brown_fox;
         test_text->widget = text_widget->id;
-        entity_init<ui_drawable>( test_text );
-        sdl_render_text( test_text );
+        test_text->type = e_ui_drawable::text;
         test_text->image_.name = "quick_brown_fox";
-        test_text->image_.draw_box.size = { f32(test_text->image_.image.size.x),
-                                            f32(test_text->image_.image.size.y) };
-        test_text->image_.draw_box.position = { 500.0, 500.0 };
+        test_text->text.bounding_box = { 1920.0, 50.0 };
+        test_text->image_.draw_box.position = { 500.0, 0.0 };
+
+        entity_init<ui_drawable>( test_text );
+
+        sdl_render_text( test_text );
         test_text->image_.id = uuid_generate();
+        command command_2 = {
+            .type = e_command::property,
+            .name = "debug_test_text",
+            .description = "",
+            .aliases = { "help" },
+            .on_trigger = [test_text](command* arg) {
+                test_text->text.text = arg->property.value.get_string().value;
+                TYON_LOG( "Set test test" );
+            },
+            .property { .value_type = e_primitive::string_ },
+        };
+        g_command->c_log_debug_break = command_add( &command_2 );
 
         entity_init( test_text );
         entity_init( text_widget );
-        g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
+        // g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
 
         TYON_LOG( "UI Initialized" );
 
@@ -157,7 +171,7 @@ namespace tyon
         return {};
     }
 
-    PROC ui_action_command_trigger_callback( uid action_id ) -> void
+    PROC ui_action_command_trigger_callback( command* context, uid action_id ) -> void
     {
         auto action_s = entity_search_id_array( &g_ui->actions_bound, action_id );
         if (action_s.match_found)
@@ -190,7 +204,8 @@ namespace tyon
             .description = "Not provided.",
             .aliases = {},
         };
-        command_1.on_trigger.assign_closure( ui_action_command_trigger_callback, arg->id );
+        command_1.on_trigger = [id = arg->id](command* arg) {
+            ui_action_command_trigger_callback( arg, id ); };
         command_add( &command_1 );
 
         return arg->id;

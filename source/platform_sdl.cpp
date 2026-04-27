@@ -368,34 +368,39 @@ namespace tyon
         i32 width {};
         i32 height {};
 
+        bool skip_rendering = (text_changed == false);
+        if (skip_rendering)
+        {   return false; }
 
-        if (text_changed)
-        {
-            props.sdl_text = sdl::TTF_CreateText(
-                g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
-            text_ok = bool(props.sdl_text);
-        }
-        if (props.wrapped && props.sdl_text)
+        props.sdl_text = sdl::TTF_CreateText(
+            g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
+        text_ok = bool(props.sdl_text);
+        TYON_LOG( "Rendering text" );
+
+        if (props.wrapped && text_ok)
         {
             i32 wrap_pixels = 0;
             // NOTE: zero means wrap on newline
             bool wrap_ok = TTF_SetTextWrapWidth( props.sdl_text, wrap_pixels );
         }
 
-        // Have to do this after setting settings like wrap length
-        if (text_changed)
-        {
-            bool size_ok = sdl::TTF_GetTextSize( props.sdl_text, &width, &height );
-            // Use BGRA format to save round trip convertion in Vulkan
-            SDL_DestroySurface( props.surface );
-            props.surface = SDL_CreateSurface( width, height, SDL_PIXELFORMAT_BGRA8888 );
-        }
+        // Have to do this after changing settings like wrap length
+        bool size_ok = sdl::TTF_GetTextSize( props.sdl_text, &width, &height );
+        // Use BGRA format to save round trip convertion in Vulkan
+        SDL_DestroySurface( props.surface );
+        /** NOTE: We're going to be confining the text to within a predefined
+            bounding box generally limited to the size of the widget, if it goes
+            over the bounds, oh well, it gets clipped, but its generally a bug
+            if this does happen. */
+        props.surface = SDL_CreateSurface(
+            i32(props.bounding_box.x), i32(props.bounding_box.y), SDL_PIXELFORMAT_BGRA8888 );
 
         if (props.surface && text_ok)
         {
             props.rendered_size = { f32(width), f32(height) };
-            props.bounding_box = props.rendered_size;
             text_ok = sdl::TTF_DrawSurfaceText( props.sdl_text, 0, 0, props.surface );
+            // Update text state
+            props.previous_text = props.text;
         }
 
         if (props.surface)
@@ -409,42 +414,12 @@ namespace tyon
             surface_view.format = color_format::bgra8;
 
             arg->image_.image = image_packed_from_simd( surface_view );
+            arg->image_.write_timestamp = time_now_ns();
+            /* NOTE: We destroyed the surface here previously but it's
+             * convenient to keep it around for now */
             SDL_DestroySurface( props.surface );
         }
         return false;
     }
 
-    PROC sdl_render_text_old( ui_drawable* arg ) -> fresult
-    {
-        PROFILE_SCOPE_FUNCTION();
-        const text_drawable& props = arg->text;
-        SDL_Surface* text_surface {};
-        SDL_Color sdl_white = { 255, 255, 255, 255 };
-
-        if (props.wrapped == false)
-        {
-            text_surface = sdl::TTF_RenderText_Blended(
-                g_sdl->default_font, props.text.c_str(), props.text.size(), sdl_white );
-        }
-        else
-        {
-            i32 wrap_width = 80;
-            TTF_RenderText_Blended_Wrapped(
-                g_sdl->default_font, props.text.c_str(), props.text.size(), sdl_white, wrap_width );
-        }
-
-        if (text_surface)
-        {
-            ERROR_GUARD( text_surface->format == SDL_PIXELFORMAT_ARGB8888,
-                         "Our internal API must have changed." );
-            image<argb> surface_view;
-            surface_view.data = raw_pointer(text_surface->pixels);
-            surface_view.size = { text_surface->w, text_surface->h };
-            surface_view.stride_bytes_ = text_surface->pitch;
-            image<argb> temp =image_packed_from_simd( surface_view );
-            arg->image_.image = image_color_reorder_inplace<rgba>( temp );
-            SDL_DestroySurface( text_surface );
-        }
-        return false;
-    }
 }

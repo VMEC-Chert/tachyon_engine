@@ -1713,7 +1713,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     // Image is good, we finish filling in all the data
     vulkan_label_object( u64(image->platform_image), VK_OBJECT_TYPE_IMAGE, "image_" + arg->name );
     image->size = v2_f32{ f32(arg->image.size.x), f32(arg->image.size.y)};
-
+    image->size_ = arg->image.size;
 
     bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
 
@@ -2110,10 +2110,36 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
 
     if (vk_draw_image)
     {
+        bool dimensions_changed = (current_image->image.size.x - vk_draw_image->size_.x ||
+                                   current_image->image.size.y - vk_draw_image->size_.y);
+        // TODO: Need to free image resources somewhere else
+        if (dimensions_changed)
+        {
+            // Create a new image and make the old one as deleted
+            bool image_ok = vulkan_image_init( current_image );
+            image_result = g_vulkan->images.linear_search( [current_image]( vulkan_image& arg ) {
+                return (arg.associated_image == current_image->id) && arg.id.valid(); } );
+
+            // Don't swap out images if the init failed
+            if (image_ok)
+            {   // Invalidate the old image and mark it for removal
+                // NOTE: This is easier than checkig for "destroyed" seperately
+                vk_draw_image->id = 0;
+                vk_draw_image->destroyed = true;
+                vk_draw_image = image_result.match;
+            }
+            /* TODO: This could cause run away resource usage if we have a
+               bad/corrupted vulkan_image list/id need to investigate
+               mitigations for this */
+        }
+
         // Update image if it's  dirty
         bool dirty_buffer = (current_image->write_timestamp > vk_draw_image->update_timestamp);
         bool update_image = dirty_buffer;
         // update_image = true; // DEBUG: Force update every time
+
+        // NOTE: We need to track what frames are using this resource so we know when its safe to free
+        vk_draw_image->last_frame_used = frame->draw_index;
 
         // We can update this every time its just display configuration data
         vk_draw_image->draw_size = arg->draw_box.size;
@@ -3032,6 +3058,7 @@ PROC vulkan_start_frame() -> void
     {
         // VULKAN_LOGF( "Frame: {} | Completed Frame.", current_frame_i );
         if (g_render->display_ready == false) { g_render->display_ready = true; }
+        g_vulkan->frames_completed++;
         FrameMarkEnd( "Vulkan Inflight Frame" );
     }
     FrameMarkStart( "Vulkan Inflight Frame" );

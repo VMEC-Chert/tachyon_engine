@@ -159,7 +159,9 @@ struct text_drawable
     SDL_Surface* surface;
     rgba color = rgba{.hex = 0xFFFFFF };
     rgba background_color;
+    /** The maximum region the drawable must fit into */
     v2_f32 bounding_box;
+    /** The minimum region the drawable can fit into, ie the bounding box of the rendered content. */
     v2_f32 rendered_size;
     f32 size_pt = 0.0f;
     f32 size_rendered_pt = 0.0f;
@@ -452,9 +454,6 @@ struct entity_type_definition<ui_drawable>
         {   TYON_ERROR( "Drawable has no associated widget, did you forget to set it?" );
             return false;
         }
-        ui_widget* widget = entity_allocate<ui_widget>();
-        // widget
-        entity_init( widget );
         mesh_init( &arg->geometry );
 
         return false;
@@ -473,8 +472,10 @@ struct entity_type_definition<ui_drawable>
         ui_widget* widget = entity_search<ui_widget>( arg->widget ).copy_default(nullptr);
         if (widget == nullptr)
         {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
+            return;
         }
         // TODO: Cache this result for high poly geometry
+        // NOTE: Cache what???
         switch (arg->type)
         {
             case e_ui_drawable::mesh:
@@ -489,7 +490,12 @@ struct entity_type_definition<ui_drawable>
             }
             case e_ui_drawable::text:
             {
+                // Update bounding box if relevant
+                arg->text.bounding_box = widget->bounding_box.size;
 
+                sdl_render_text( arg );
+                // NOTE: We're kind of just borrowing usage of the image here, dual purpose
+                g_render->draw_queue_image.push_tail( &arg->image_ );
             }
             default: break;
         }
