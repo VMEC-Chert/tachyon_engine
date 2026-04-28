@@ -491,7 +491,8 @@ struct entity_type_definition<ui_drawable>
             case e_ui_drawable::text:
             {
                 // Update bounding box if relevant
-                arg->text.bounding_box = widget->bounding_box.size;
+                // NOTE: Broken API currently
+                // arg->text.bounding_box = widget->bounding_box.size;
 
                 sdl_render_text( arg );
                 // NOTE: We're kind of just borrowing usage of the image here, dual purpose

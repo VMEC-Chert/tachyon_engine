@@ -376,6 +376,7 @@ namespace tyon
             g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
         text_ok = bool(props.sdl_text);
         TYON_LOG( "Rendering text" );
+        ERROR_GUARD( props.sdl_text, "Major issue if false" );
 
         if (props.wrapped && text_ok)
         {
@@ -387,7 +388,6 @@ namespace tyon
         // Have to do this after changing settings like wrap length
         bool size_ok = sdl::TTF_GetTextSize( props.sdl_text, &width, &height );
         // Use BGRA format to save round trip convertion in Vulkan
-        SDL_DestroySurface( props.surface );
         /** NOTE: We're going to be confining the text to within a predefined
             bounding box generally limited to the size of the widget, if it goes
             over the bounds, oh well, it gets clipped, but its generally a bug
@@ -413,11 +413,11 @@ namespace tyon
             surface_view.stride_bytes_ = props.surface->pitch;
             surface_view.format = color_format::bgra8;
 
+            push_allocator _al1 { g_thread->scratch };
             arg->image_.image = image_packed_from_simd( surface_view );
             arg->image_.write_timestamp = time_now_ns();
             /* NOTE: We destroyed the surface here previously but it's
              * convenient to keep it around for now */
-            SDL_DestroySurface( props.surface );
         }
         return false;
     }

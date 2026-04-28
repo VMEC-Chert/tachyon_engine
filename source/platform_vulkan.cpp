@@ -1672,7 +1672,7 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
     return true;
 }
 
-PROC vulkan_image_init( render_image* arg ) -> fresult
+PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
 {
     VkImageCreateInfo image_args {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1707,7 +1707,7 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
     if (image_bad)
     {
         VULKAN_ERROR( "Failed to create image for drawing: {}",string_VkResult(image_bad) );
-        return false;
+        return monad<vulkan_image*> { nullptr, true };
     }
 
     // Image is good, we finish filling in all the data
@@ -1740,7 +1740,8 @@ PROC vulkan_image_init( render_image* arg ) -> fresult
 
     image->id = uuid_generate();
     VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
-    return suballocate_ok;
+    monad<vulkan_image*> result { image, suballocate_ok };
+    return result;
 }
 
 PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fresult
@@ -2116,17 +2117,15 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         if (dimensions_changed)
         {
             // Create a new image and make the old one as deleted
-            bool image_ok = vulkan_image_init( current_image );
-            image_result = g_vulkan->images.linear_search( [current_image]( vulkan_image& arg ) {
-                return (arg.associated_image == current_image->id) && arg.id.valid(); } );
+            monad<vulkan_image*> image_result = vulkan_image_init( current_image );
 
             // Don't swap out images if the init failed
-            if (image_ok)
+            if (image_result.error == false)
             {   // Invalidate the old image and mark it for removal
                 // NOTE: This is easier than checkig for "destroyed" seperately
                 vk_draw_image->id = 0;
                 vk_draw_image->destroyed = true;
-                vk_draw_image = image_result.match;
+                vk_draw_image = image_result.value;
             }
             /* TODO: This could cause run away resource usage if we have a
                bad/corrupted vulkan_image list/id need to investigate
@@ -3513,6 +3512,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 
     // if (sync_ok != VK_SUCCESS)
     // { TYON_ERROR( "Failed to wait on frame start fence for some reason" ); }
+    // TODO: This doesn't wait for memory transfers to finish, this is actually kind of an issue
+    // Need to wait on the frame end fence
     vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame->end_fence );
 
     VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };

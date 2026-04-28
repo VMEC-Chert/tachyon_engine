@@ -548,7 +548,7 @@ PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64;
 
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
-PROC vulkan_image_init( render_image* arg ) -> fresult;
+PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>;
 
 /** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
