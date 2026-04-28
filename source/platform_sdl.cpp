@@ -147,6 +147,10 @@ namespace tyon
         SDL_GetWindowSize( platform_window.handle, &window_width, &window_height );
         TYON_LOGF( "Created window size, width: {} : height {}" , window_height, window_height );
 
+        // TODO: Temporary
+        SDL_StartTextInput( platform_window.handle );
+
+
         return true;
     }
 
@@ -242,6 +246,11 @@ namespace tyon
                             TYON_LOG( "Changed mesh debug mode to {}", selected_mode );
                         }
                     }
+
+                    // Backspace input handling
+                    // fstring& input = g_ui->console_input;
+                    // i64 size = SDL_strlen( g_ui->console_input );
+                    // SDL_StepBackUTF8( input.c_str(), input.c_str() + input.size() );
                     break;
                 }
                 case SDL_EVENT_KEY_UP:
@@ -300,6 +309,17 @@ namespace tyon
                           SDL_MouseButtonFlags state, x, y, xrel, yrel */
                     // TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
                                // e.x, e.y, e.xrel, e.yrel );
+                    break;
+                }
+                case SDL_EVENT_TEXT_EDITING:
+                {
+                    // NOTE: Aparently this is for character construction like CJK languages?
+                    break;
+                }
+                case SDL_EVENT_TEXT_INPUT:
+                {
+                    SDL_TextInputEvent e = x_event.text;
+                    g_ui->console_input += e.text;
                     break;
                 }
                 default:

@@ -369,6 +369,8 @@ struct ui_context
 
     uid tmp_bar;
     render_image test_image;
+
+    fstring console_input;
 };
 
 extern ui_context* g_ui;
@@ -493,6 +495,8 @@ struct entity_type_definition<ui_drawable>
                 // Update bounding box if relevant
                 // NOTE: Broken API currently
                 // arg->text.bounding_box = widget->bounding_box.size;
+                // TODO: Temporary stupid thing
+                arg->text.text = g_ui->console_input;
 
                 sdl_render_text( arg );
                 // NOTE: We're kind of just borrowing usage of the image here, dual purpose
