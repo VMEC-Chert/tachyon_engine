@@ -370,6 +370,7 @@ struct ui_context
     uid tmp_bar;
     render_image test_image;
 
+     bool console_input_enabled = false;
     fstring console_input;
 };
 

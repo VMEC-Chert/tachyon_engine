@@ -307,8 +307,8 @@ namespace tyon
                     g_ui->input.mouse_delta = v2_f32{ e.xrel, e.yrel };
                     /* timestamp, windowID, SDL_MouseID which (unique mouse id),
                           SDL_MouseButtonFlags state, x, y, xrel, yrel */
-                    // TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
-                               // e.x, e.y, e.xrel, e.yrel );
+                    TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
+                               e.x, e.y, e.xrel, e.yrel );
                     break;
                 }
                 case SDL_EVENT_TEXT_EDITING:
@@ -319,7 +319,10 @@ namespace tyon
                 case SDL_EVENT_TEXT_INPUT:
                 {
                     SDL_TextInputEvent e = x_event.text;
-                    g_ui->console_input += e.text;
+                    if (g_ui->console_input_enabled)
+                    {
+                        g_ui->console_input += e.text;
+                    }
                     break;
                 }
                 default:

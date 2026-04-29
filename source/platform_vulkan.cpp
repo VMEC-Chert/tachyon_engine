@@ -3077,6 +3077,33 @@ PROC vulkan_start_frame() -> void
     frame->uniform.camera = (matrix_camera_view( g_render->ui_camera.transform ) *
                              g_render->ui_camera.create_orthographic_projection());
 
+    bool wrap_frame_0 = (frame->inflight_index == 0);
+    if (wrap_frame_0)
+    {
+        /* NOTE: The memory transfer queue isn't strictly bound to a frame... and I don't
+           know if it will ever need to be...  but it should be safe to reset each
+           time because its passed to the command buffer to save the state... and it
+           only needs to be done once...
+
+           WARNING: HOWEVER, you do have to synchronize with a barrier before
+           starting a new transfer
+
+           NOTE: I keep on moving this because of issues with resetting it too early
+           and the more time I relocate it the more I think my current Vulkan
+           organization is wrong in some way
+           HACK: Reset transfer buffer when we come back around to inflight_frame 0
+           NOTE: It doesn't actually have to be reset here, it just needs to be
+           REMARK: This is proving to be the most complicated part of Vulkan to get right.
+        NOTE:reset when all the transfers are done.
+        NOTE: Reset everyting to do with per-frame transfers
+        */
+        g_vulkan->transfer.transfer_queue.reset();
+        // Need to reset used position too
+        g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
+            arg.head_size = 0; });
+        // VULKAN_LOG( "Executed GPU transfers" );
+    }
+
     // SECTION: Iterate through the draw images and see if any need updating before drawing
     // NOTE: We have to do this after aquiring a new frame or we keep on issuing endless commands on VK_TIMEOUT
     for (i32 i=0; i < g_render->draw_queue_image.size(); ++i)
@@ -3608,6 +3635,7 @@ PROC vulkan_ui_blit_command_update_data(
     }
 }
 
+// NOTE: Doesn't actually execute transfers, just queues them
 PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan_frame* frame )
     -> fresult
 {
@@ -3766,26 +3794,7 @@ PROC vulkan_command_execute_transfers( vulkan_transfer_context* transfer, vulkan
             default: break;
         }
     }
-    /* The memory transfer queue isn't strictly bound to a frame... and I don't
-       know if it will ever need to be...  but it should be safe to reset each
-       time because its passed to the command buffer to save the state... and it
-       only needs to be done once...
 
-       WARNING: HOWEVER, you do have to synchronize with a barrier before
-       starting a new transfer
-
-       NOTE: I keep on moving this because of issues with resetting it too early
-       and the more time I relocate it the more I think my current Vulkan
-       organization is wrong in some way
-
-       NOTE: It doesn't actually have to be reset here, it just needs to be
-       reset when all the transfers are done. */
-    // Reset everyting to do with per-frame transfers
-    g_vulkan->transfer.transfer_queue.reset();
-    // Need to reset used position too
-    g_vulkan->transfer.buffers.map_procedure( [](vulkan_transfer_buffer& arg) {
-        arg.head_size = 0; });
-    // VULKAN_LOG( "Executed GPU transfers" );
     return false;
 }
 
