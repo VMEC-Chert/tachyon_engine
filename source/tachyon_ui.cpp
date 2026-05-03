@@ -13,12 +13,9 @@ namespace tyon
         g_ui = memory_allocate<ui_context>(1);
 
         // Register all entity types
-        entity_type_register<ui_widget>();
-        entity_type_register<ui_drawable>();
-
         // Create a test widget
-        ui_drawable* test_status_bar = entity_allocate<ui_drawable>();
-        ui_widget* test_status_widget = entity_allocate<ui_widget>();
+        ui_drawable* test_status_bar = entity_allocate<ui_drawable>( &g_ui->drawables );
+        ui_widget* test_status_widget = entity_allocate<ui_widget>( &g_ui->widgets );
         test_status_bar->geometry = {
             .name = "test_status_bar",
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
@@ -28,8 +25,8 @@ namespace tyon
         test_status_widget->transform.translation.z = 528 - 12;
         g_ui->tmp_bar = test_status_widget->id;
 
-        entity_init( test_status_bar );
-        entity_init( test_status_widget );
+        ui_drawable_init( test_status_bar );
+        // entity_init( test_status_widget );
 
         g_ui->test_image.image.data = memory_allocate<rgba>( 400 * 400 );
         g_ui->test_image.image.size = { 400, 400 };
@@ -43,8 +40,8 @@ namespace tyon
         fstring quick_brown_fox = "The quick brown fox jumped over the lazy dog.";
         fstring quick_brown_fox_lower = "the quick brown fox jumped over the lazy dog";
         fstring quick_brown_fox_upper = "THE QUICK BROWN FOX JUMPED OVER THE LAZY DOG";
-        ui_drawable* test_text = entity_allocate<ui_drawable>();
-        auto text_widget = entity_allocate<ui_widget>();
+        ui_drawable* test_text = entity_allocate<ui_drawable>( &g_ui->drawables);
+        auto text_widget = entity_allocate<ui_widget>( &g_ui->widgets );
         test_text->text.text = quick_brown_fox;
         test_text->widget = text_widget->id;
         test_text->type = e_ui_drawable::text;
@@ -52,7 +49,7 @@ namespace tyon
         test_text->text.bounding_box = { 1920.0, 50.0 };
         test_text->image_.draw_box.position = { 500.0, 0.0 };
 
-        entity_init<ui_drawable>( test_text );
+        ui_drawable_init( test_text );
 
         sdl_render_text( test_text );
         test_text->image_.id = uuid_generate();
@@ -69,9 +66,8 @@ namespace tyon
         };
         g_command->c_log_debug_break = command_add( &command_2 );
 
-        entity_init( test_text );
-        entity_init( text_widget );
-        // g_render->permanent_draw_queue_image.push_tail( &test_text->image_ );
+        ui_drawable_init( test_text );
+        // ui_widget_init( text_widget );
 
         TYON_LOG( "UI Initialized" );
 
@@ -86,7 +82,8 @@ namespace tyon
 
         // TYON_LOG( g_ui->input.mouse_scroll.y );
 
-        entity_tick_all<ui_drawable>();
+        // entity_tick_all( &g_ui->widgets, ui_widget_tick );
+        entity_tick_all( &g_ui->drawables, ui_drawable_tick );
         // Test code
         // g_render->draw_queue_image.push_tail( &g_ui->test_image );
 
@@ -95,7 +92,7 @@ namespace tyon
         f32 mouse_y = 0.0f;
         SDL_MouseButtonFlags flags = SDL_GetMouseState( &mouse_x, &mouse_y );
         // auto* drawable = entity_search<ui_drawable>( g_ui->tmp_bar ).copy_default(nullptr);
-        auto* widget = entity_search<ui_widget>( g_ui->tmp_bar ).copy_default(nullptr);
+        auto* widget = entity_search_id( &g_ui->widgets, g_ui->tmp_bar ).match;
         // box_2d widget_bounds = mesh_bounding_box_2d( &drawable->geometry );
         box_2d widget_bounds = widget->bounding_box;
         bool collide = ui_point_box_collision( g_ui->input.mouse_window,
@@ -128,6 +125,69 @@ namespace tyon
         PROFILE_SCOPE_FUNCTION();
     }
 
+    PROC ui_drawable_init( ui_drawable* arg ) -> fresult
+    {
+        if (arg->widget.valid() == false)
+        {   TYON_ERROR( "Drawable has no associated widget, did you forget to set it?" );
+            return false;
+        }
+        mesh_init( &arg->geometry );
+
+        return false;
+    }
+
+    PROC ui_drawable_destroy( ui_drawable* arg ) -> void
+    {
+    }
+
+    PROC ui_drawable_tick( ui_drawable* arg ) -> void
+    {
+        if (arg->active == false)
+        {   return; }
+
+        // SECTION: Regenerate appropriate variables
+        ui_widget* widget = entity_search_id( &g_ui->widgets, arg->widget ).match;
+        if (widget == nullptr)
+        {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
+            return;
+        }
+        // TODO: Cache this result for high poly geometry
+        // NOTE: Cache what???
+        switch (arg->type)
+        {
+            case e_ui_drawable::mesh:
+            {
+                widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
+
+                // TODO: Construct transform from widget hierarchy
+                arg->geometry.transform = widget->transform;
+
+                // Queue the drawable for drawing
+                g_render->draw_queue_mesh.push_tail( &arg->geometry );
+            }
+            case e_ui_drawable::text:
+            {
+                // Update bounding box if relevant
+                // NOTE: Broken API currently
+                // arg->text.bounding_box = widget->bounding_box.size;
+                // TODO: Temporary stupid thing
+                arg->text.text = g_ui->console_input;
+
+                sdl_render_text( arg );
+                // NOTE: We're kind of just borrowing usage of the image here, dual purpose
+                g_render->draw_queue_image.push_tail( &arg->image_ );
+            }
+            default: break;
+        }
+    }
+
+    PROC window_destroy( window* arg ) -> void
+    {
+        auto sdl = sdl_create_platform_subsystem();
+        sdl.window_close( arg );
+        *arg = {};
+    }
+
     PROC ui_point_box_collision( v2_f32 point, v2_f32 box_pos, v2_f32 box_size ) -> bool
     {
         // Clip means "inside of x extent"
@@ -143,7 +203,7 @@ namespace tyon
     PROC ui_widget_construct_tree() -> widget_tree
     {
         widget_tree tree;
-        auto& widget_list = entity_get_context<ui_widget>()->list;
+        auto& widget_list = g_ui->widgets.entities;
         i_allocator* allocator = g_thread->scratch;
 
         // +1 for the root node

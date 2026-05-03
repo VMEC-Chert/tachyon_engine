@@ -8,7 +8,6 @@ namespace tyon
     {   PROFILE_SCOPE_FUNCTION();
         TYON_LOG( "Initialization Start for Platform SDL" );
         g_sdl = memory_allocate<sdl_context>( 1 );
-        entity_type_register<sdl_window>();
 
         // NOTE: SDL must not ever move threads
         SDL_SetLogPriorities( SDL_LOG_PRIORITY_TRACE );
@@ -41,7 +40,7 @@ namespace tyon
 
         // TODO: Load font as asset
         ui_font& font = g_ui->default_font;
-        file* noto_sans_file = entity_allocate<file>();
+        file* noto_sans_file = entity_allocate( &g_library->files );
         *noto_sans_file = file_load_binary( "data/fonts/noto_sans/NotoSans-Regular.ttf" );
         SDL_IOStream* noto_sans_io = SDL_IOFromMem(
             noto_sans_file->memory.data, noto_sans_file->memory.size );
@@ -107,7 +106,7 @@ namespace tyon
     {   PROFILE_SCOPE_FUNCTION();
         TYON_LOG( "Opening Window using SDL platform" );
 
-        sdl_window& platform_window = *entity_allocate<sdl_window>();
+        sdl_window& platform_window = g_sdl->windows.push_tail({});
         arg->id = uuid_generate();
         platform_window.id = arg->id;
 
@@ -157,7 +156,7 @@ namespace tyon
     PROC sdl_window_close( window* arg ) -> fresult
     {
         PROFILE_SCOPE_FUNCTION();
-        sdl_window* platform_window = entity_search<sdl_window>( arg->id ).copy_default({});
+        sdl_window* platform_window = entity_search_id_array( &g_sdl->windows, arg->id ).match;
         SDL_DestroyWindow( platform_window->handle );
         TYON_LOGF( "Closed platform window '{}'", arg->name );
         return false;

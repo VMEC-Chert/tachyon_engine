@@ -356,6 +356,11 @@ struct ui_frame
 
 struct ui_context
 {
+    // SECTION: Entities
+    entity_list<ui_widget> widgets;
+    entity_list<ui_drawable> drawables;
+
+    // SECTION: Other stuff
     entity_uid<ui_widget> canvas;
     memory_heap_allocator permanant;
     ui_font default_font;
@@ -376,142 +381,6 @@ struct ui_context
 
 extern ui_context* g_ui;
 
-template<>
-struct entity_type_definition<window>
-{
-    using t_entity = window;
-    using t_context = entity_type_context<t_entity>;
-    static constexpr cstring name = "tyon::window";
-    static constexpr u128 id = uuid("965fd378-6573-4844-aa34-e6645cc3ac7a");
-
-    PROC allocate() -> void
-    {}
-
-    PROC init( t_entity* arg ) -> fresult
-    {
-        return false;
-    }
-    PROC destroy( t_entity* arg ) -> void
-    {
-        auto sdl = sdl_create_platform_subsystem();
-        sdl.window_close( arg );
-        *arg = {};
-    }
-
-    PROC tick() -> void
-    {}
-
-    static PROC context_tick( void* context ) -> void
-    {}
-
-    static PROC destroy_all( void* context ) -> void
-    {}
-
-};
-
-template<>
-struct entity_type_definition<ui_widget>
-{
-    using t_entity = ui_widget;
-    using t_context = entity_type_context<t_entity>;
-    static constexpr cstring name = "tyon::ui_widget";
-    static constexpr u128 id = uuid("a2a6cb83-8820-496b-a9e3-8ffc09c52c3f");
-
-    PROC allocate() -> void
-    {}
-
-    PROC init( t_entity* arg ) -> fresult
-    {
-        return false;
-    }
-    PROC destroy( t_entity* arg ) -> void
-    {
-        *arg = {};
-    }
-
-    PROC tick( t_entity* arg ) -> void
-    {}
-
-    static PROC context_tick( void* context ) -> void
-    {}
-
-    static PROC destroy_all( void* context ) -> void
-    {}
-
-};
-
-template<>
-struct entity_type_definition<ui_drawable>
-{
-    using t_entity = ui_drawable;
-    using t_context = entity_type_context<t_entity>;
-    static constexpr cstring name = "tyon::ui_drawable";
-    static constexpr u128 id = uuid( "3e73fc4a-9d81-4fae-ad5d-49d2c0d68cb7" );
-
-    PROC allocate() -> void
-    {}
-
-    PROC init( t_entity* arg ) -> fresult
-    {
-        if (arg->widget.valid() == false)
-        {   TYON_ERROR( "Drawable has no associated widget, did you forget to set it?" );
-            return false;
-        }
-        mesh_init( &arg->geometry );
-
-        return false;
-    }
-    PROC destroy( t_entity* arg ) -> void
-    {
-        *arg = t_entity{};
-    }
-
-    PROC tick( t_entity* arg ) -> void
-    {
-        if (arg->active == false)
-        {   return; }
-
-        // SECTION: Regenerate appropriate variables
-        ui_widget* widget = entity_search<ui_widget>( arg->widget ).copy_default(nullptr);
-        if (widget == nullptr)
-        {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
-            return;
-        }
-        // TODO: Cache this result for high poly geometry
-        // NOTE: Cache what???
-        switch (arg->type)
-        {
-            case e_ui_drawable::mesh:
-            {
-                widget->bounding_box = mesh_bounding_box_2d( &arg->geometry );
-
-                // TODO: Construct transform from widget hierarchy
-                arg->geometry.transform = widget->transform;
-
-                // Queue the drawable for drawing
-                g_render->draw_queue_mesh.push_tail( &arg->geometry );
-            }
-            case e_ui_drawable::text:
-            {
-                // Update bounding box if relevant
-                // NOTE: Broken API currently
-                // arg->text.bounding_box = widget->bounding_box.size;
-                // TODO: Temporary stupid thing
-                arg->text.text = g_ui->console_input;
-
-                sdl_render_text( arg );
-                // NOTE: We're kind of just borrowing usage of the image here, dual purpose
-                g_render->draw_queue_image.push_tail( &arg->image_ );
-            }
-            default: break;
-        }
-    }
-
-    static PROC context_tick( void* context ) -> void {}
-    static PROC destroy_all( void* context ) -> void {}
-
-};
-
 using widget_tree = n_tree<ui_widget*>;
 
 PROC ui_init() -> fresult;
@@ -528,6 +397,12 @@ PROC ui_destroy() -> void;
 
 PROC ui_tick_start() -> void;
 PROC ui_tick_end() -> void;
+
+PROC ui_drawable_init( ui_drawable* arg ) -> fresult;
+PROC ui_drawable_destroy( ui_drawable* arg ) -> void;
+PROC ui_drawable_tick( ui_drawable* arg ) -> void;
+
+PROC window_destroy( window* arg ) -> void;
 
 /** Does a collision to test if a point falls inside a bounding box.
 
