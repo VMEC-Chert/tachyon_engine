@@ -63,8 +63,8 @@ namespace tyon
         console->name = console->image_.name = "console";
         // Beeeeeeg box
         // NOTE: wait why is the surface size determined by bounding box, isn't this dumb?
-        console->text.bounding_box = { 1920.0, 1080.0 };
-        console->image_.draw_box.position = { 500.0, 0.0 };
+        console->text.bounding_box = { 960.0, 700.0 };
+        console->image_.draw_box.position = { 0.0, 0.0 };
 
         ui_drawable_init( console );
         // ui_wdiget_init( console_widget );
