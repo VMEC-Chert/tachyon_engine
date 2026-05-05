@@ -373,6 +373,7 @@ struct ui_context
     ui_frame frame;
 
     uid tmp_bar;
+    uid console_drawable;
     render_image test_image;
 
      bool console_input_enabled = false;

@@ -438,6 +438,9 @@ namespace tyon
             push_allocator _al1 { g_thread->scratch };
             arg->image_.image = image_packed_from_simd( surface_view );
             arg->image_.write_timestamp = time_now_ns();
+            // NOTE: We're going to move the image into the correct format
+            // straight up to save on formatting performance
+            arg->image_.image.format = e_color_format::bgra8;
             /* NOTE: We destroyed the surface here previously but it's
              * convenient to keep it around for now */
         }

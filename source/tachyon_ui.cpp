@@ -50,9 +50,25 @@ namespace tyon
         test_text->image_.draw_box.position = { 500.0, 0.0 };
 
         ui_drawable_init( test_text );
-
         sdl_render_text( test_text );
         test_text->image_.id = uuid_generate();
+
+        // Initialize graphical command console stuff
+        ui_drawable* console = entity_allocate<ui_drawable>( &g_ui->drawables);
+        g_ui->console_drawable = console->id;
+        auto console_widget = entity_allocate<ui_widget>( &g_ui->widgets );
+        console->text.text = "";
+        console->widget = text_widget->id;
+        console->type = e_ui_drawable::text;
+        console->name = console->image_.name = "console";
+        // Beeeeeeg box
+        // NOTE: wait why is the surface size determined by bounding box, isn't this dumb?
+        console->text.bounding_box = { 1920.0, 1080.0 };
+        console->image_.draw_box.position = { 500.0, 0.0 };
+
+        ui_drawable_init( console );
+        // ui_wdiget_init( console_widget );
+
         command command_2 = {
             .type = e_command::property,
             .name = "debug_test_text",
@@ -81,6 +97,11 @@ namespace tyon
         sdl->tick();
 
         // TYON_LOG( g_ui->input.mouse_scroll.y );
+
+        // Update console commands
+        auto console_s = entity_search_id( &g_ui->drawables, g_ui->console_drawable );
+        if (console_s.match_found)
+        {   console_s.match->text.text = g_ui->console_input; }
 
         // entity_tick_all( &g_ui->widgets, ui_widget_tick );
         entity_tick_all( &g_ui->drawables, ui_drawable_tick );
@@ -132,6 +153,11 @@ namespace tyon
             return false;
         }
         mesh_init( &arg->geometry );
+        // NOTE: Well, this render image needs a uid but it isn't attached to
+        // any enttiy list I'm not sure if this is the right way to be doing
+        // this interface but images have no associated resource so it's not
+        // important right now?
+        arg->image_.id = uuid_generate();
 
         return false;
     }
@@ -170,8 +196,6 @@ namespace tyon
                 // Update bounding box if relevant
                 // NOTE: Broken API currently
                 // arg->text.bounding_box = widget->bounding_box.size;
-                // TODO: Temporary stupid thing
-                arg->text.text = g_ui->console_input;
 
                 sdl_render_text( arg );
                 // NOTE: We're kind of just borrowing usage of the image here, dual purpose
