@@ -190,66 +190,46 @@ namespace tyon
                     break;
                 case SDL_EVENT_KEY_DOWN:
                 {
+                    SDL_KeyboardEvent e = x_event.key;
+                    /** NOTE: Normal inputs should be disabled when in text input mode
+                        to prevent silly double triggers */
                     // NOTE: A failed lock is a missed events, we absolutely cannot miss events.
                     std::unique_lock _lock { g_ui->actions_lock };
                     g_ui->actions_bound.map_procedure( [key_event_ = x_event.key](ui_temp_action& arg){
-                        if (arg.keyscan == key_event_.scancode)
-                        {
-                            arg.triggered = true;
-                        }
+                        bool scancode_match = (arg.keyscan == key_event_.scancode);
+                        // TODO: Make generic for multiple hotkeys
+                        auto layer_result = entity_search_id( &g_ui->action_layers, arg.action_layer );
+                        // HACK: Hardcoded text layer
+                        bool active_custom_layer = (layer_result.match_found &&
+                                                    layer_result.match->inactive == false);
+                        // Is layer is unset its presumed its in the default global layer set
+                        bool active_global_layer = (arg.action_layer.valid() == false);
+                        bool active_layer = (active_custom_layer || active_global_layer);
+                        if (scancode_match && active_layer)
+                        {   arg.triggered = true; }
                     });
 
-                    // TODO: tmp testing, remove me
-                    if (x_event.key.repeat == false)
+                    // TODO HACK: Hadcoded text input backspace logic
+                    if (g_ui->text_input_on)
                     {
-                        TYON_LOG( "Move Event", SDL_GetScancodeName( x_event.key.scancode ) );
-                        TYON_LOGF( "[{} {} {}]",
-                                   g_vulkan->test_ui_triangle.transform.translation.x,
-                                   g_vulkan->test_ui_triangle.transform.translation.y,
-                                   g_vulkan->test_ui_triangle.transform.translation.z );
-                        v3 up = g_render->ui_camera.up();
-                        v3 right = g_render->ui_camera.right();
-                        if (x_event.key.scancode == SDL_SCANCODE_W)
-                        {   g_vulkan->test_ui_triangle.transform.translation +=
-                            (up * move_speed);
-                        }
-                        else if (x_event.key.scancode == SDL_SCANCODE_A)
-                        {   g_vulkan->test_ui_triangle.transform.translation +=
-                            (-right * move_speed);
-                        }
-                        else if (x_event.key.scancode == SDL_SCANCODE_D)
-                        {   g_vulkan->test_ui_triangle.transform.translation +=
-                            (right * move_speed);
-                        }
-                        else if (x_event.key.scancode == SDL_SCANCODE_S)
-                        {   g_vulkan->test_ui_triangle.transform.translation +=
-                            (-up * move_speed);
-                        }
-
-                        static i32 i_mesh = 0;
-                        if (x_event.key.scancode == SDL_SCANCODE_SPACE)
-                        {   i_mesh = (i_mesh + 1) % g_vulkan->tmp_meshes.size();
-                            g_vulkan->draw_mesh = g_vulkan->tmp_meshes[ i_mesh ];
-                            TYON_LOGF( "selected mesh {}", i_mesh );
-                        }
-                        if (x_event.key.scancode == SDL_SCANCODE_F2)
+                        bool backspace = (e.scancode == SDL_SCANCODE_BACKSPACE);
+                        if (backspace)
                         {
-                            // Cycle through all debug modes
-                            array<e_vulkan_shader_debug> modes = {
-                                e_vulkan_shader_debug::none,
-                                e_vulkan_shader_debug::vertex_weighted,
-                                e_vulkan_shader_debug::triangle_mosaic
-                            };
-                            i32 selected_mode = g_vulkan->mesh_debug_mode_cycle++ % modes.size();
-                            g_vulkan->mesh_debug_mode = modes[ selected_mode ];
-                            TYON_LOG( "Changed mesh debug mode to {}", selected_mode );
+                            // Backspace input handling
+                            fstring& input = g_ui->console_input;
+                            /** Find the start of the last codepoint and subtract
+                                that to know how much string length should be left
+
+                                NOTE: Doesn't handle strange characters like invisible
+                                ones, needs to handle that */
+                            i64 size = g_ui->console_input.size() ;
+                            cstring last_char = (input.data() + size);
+                            cstring back_one_utf8 = last_char;
+                            u32 read_char = SDL_StepBackUTF8( input.data(), &last_char );
+                            i64 final_size = back_one_utf8 - input.data();
+                            input.resize( final_size );
                         }
                     }
-
-                    // Backspace input handling
-                    // fstring& input = g_ui->console_input;
-                    // i64 size = SDL_strlen( g_ui->console_input );
-                    // SDL_StepBackUTF8( input.c_str(), input.c_str() + input.size() );
                     break;
                 }
                 case SDL_EVENT_KEY_UP:
@@ -318,7 +298,7 @@ namespace tyon
                 case SDL_EVENT_TEXT_INPUT:
                 {
                     SDL_TextInputEvent e = x_event.text;
-                    if (g_ui->console_input_enabled)
+                    if (g_ui->text_input_on && g_ui->console_input_on)
                     {
                         g_ui->console_input += e.text;
                     }

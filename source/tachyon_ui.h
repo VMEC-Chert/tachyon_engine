@@ -94,11 +94,22 @@ struct action
   // NOTE: Actions should not who invokes the action, they should instead link to the action.
 };
 
+ /** used for grouped disabling and tracking of actions. */
+struct ui_action_layer
+{
+    uid id;
+    fstring name;
+    bool inactive = false;
+};
+
 struct ui_temp_action
 {
     uid id;
     // Arguments
     fstring name;
+    /** What layer group this action belongs to, used for grouped disabling and tracking of actions. */
+    uid action_layer;
+
     SDL_Scancode keyscan = SDL_SCANCODE_UNKNOWN;
     /** When action is triggered it will stay triggered until state is released
 
@@ -359,8 +370,10 @@ struct ui_context
     // SECTION: Entities
     entity_list<ui_widget> widgets;
     entity_list<ui_drawable> drawables;
+    entity_list<ui_action_layer> action_layers;
 
     // SECTION: Other stuff
+    uid layer_text_input;
     entity_uid<ui_widget> canvas;
     memory_heap_allocator permanant;
     ui_font default_font;
@@ -376,7 +389,8 @@ struct ui_context
     uid console_drawable;
     render_image test_image;
 
-     bool console_input_enabled = false;
+    bool console_input_on = false;
+    bool text_input_on = false;
     fstring console_input;
 };
 
