@@ -373,6 +373,7 @@ struct ui_context
     entity_list<ui_action_layer> action_layers;
 
     // SECTION: Other stuff
+    /** Action layer */
     uid layer_text_input;
     entity_uid<ui_widget> canvas;
     memory_heap_allocator permanant;

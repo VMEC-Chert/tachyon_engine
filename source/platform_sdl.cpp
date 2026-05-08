@@ -197,13 +197,17 @@ namespace tyon
                     std::unique_lock _lock { g_ui->actions_lock };
                     g_ui->actions_bound.map_procedure( [key_event_ = x_event.key](ui_temp_action& arg){
                         bool scancode_match = (arg.keyscan == key_event_.scancode);
-                        // TODO: Make generic for multiple hotkeys
                         auto layer_result = entity_search_id( &g_ui->action_layers, arg.action_layer );
-                        // HACK: Hardcoded text layer
+
+                        // NOTE: Hardcoded text layer special casing
                         bool active_custom_layer = (layer_result.match_found &&
-                                                    layer_result.match->inactive == false);
+                                                    layer_result.match->inactive == false &&
+                                                    g_ui->console_input_on == false);
                         // Is layer is unset its presumed its in the default global layer set
-                        bool active_global_layer = (arg.action_layer.valid() == false);
+                        bool active_global_layer = (arg.action_layer.valid() == false &&
+                                                    g_ui->console_input_on == false);
+                        bool active_text_layer (g_ui->console_input_on &&
+                                                arg.id == g_ui->layer_text_input);
                         bool active_layer = (active_custom_layer || active_global_layer);
                         if (scancode_match && active_layer)
                         {   arg.triggered = true; }
