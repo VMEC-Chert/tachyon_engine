@@ -12,7 +12,17 @@ namespace tyon
         }
         g_ui = memory_allocate<ui_context>(1);
 
-        // Register all entity types
+        // SECTION: Initialize keybinds and actions
+        ui_action_layer* text_input = entity_allocate( &g_ui->action_layers );
+        text_input->name = "text_input";
+        g_ui->layer_text_input = text_input->id;
+
+        ui_temp_action command_console_open;
+        command_console_open.name = "command_console_open";
+        command_console_open.keyscan = SDL_SCANCODE_GRAVE;
+        command_console_open.action_layer = g_ui->layer_text_input;
+        g_ui->command_console_open = ui_action_create( &command_console_open );
+
         // Create a test widget
         ui_drawable* test_status_bar = entity_allocate<ui_drawable>( &g_ui->drawables );
         ui_widget* test_status_widget = entity_allocate<ui_widget>( &g_ui->widgets );
@@ -125,6 +135,9 @@ namespace tyon
         {   TYON_LOG( "mouse hover" );
         }
 
+        if (ui_action_triggered( g_ui->command_console_open ))
+        {   ui_console_open( !g_ui->console_input_on ); }
+
         ui_tick_end();
     }
 
@@ -168,7 +181,7 @@ namespace tyon
 
     PROC ui_drawable_tick( ui_drawable* arg ) -> void
     {
-        if (arg->active == false)
+        if (arg->inactive)
         {   return; }
 
         // SECTION: Regenerate appropriate variables
@@ -317,6 +330,16 @@ namespace tyon
             }
         });
         return result_triggered;
+    }
+
+    PROC ui_console_open( bool open_else_close ) -> void
+    {
+        auto console_result = entity_search_name( &g_ui->drawables, "console" );
+        tyon::g_ui->console_input_on = open_else_close;
+        g_ui->text_input_on = g_ui->console_input_on;
+        if (console_result.match_found)
+        {   console_result.match->inactive = (g_ui->console_input_on == false);  }
+        TYON_LOGF( "console_input_on: {}", g_ui->console_input_on );
     }
 
 }

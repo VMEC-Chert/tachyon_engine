@@ -242,7 +242,7 @@ struct ui_widget
     e_ui_anchor origin_anchor = e_ui_anchor::center;
 
     /// Whether this widget particupates in all processing, transformation, collisions, etc
-    bool active = true;
+    bool inactive = false;
     /// Whether this widget participates in collision checks
     bool collisions_enabled = true;
     /// Whether or not the user can manually relocate this widget
@@ -317,7 +317,7 @@ struct ui_drawable
     uid id;
     fstring name;
     uid widget;
-    bool active = true;
+    bool inactive = false;
 
     e_ui_drawable type = e_ui_drawable::none;
     render_image image_;
@@ -371,6 +371,9 @@ struct ui_context
     entity_list<ui_widget> widgets;
     entity_list<ui_drawable> drawables;
     entity_list<ui_action_layer> action_layers;
+
+    // SECTION: Actions
+    uid command_console_open;
 
     // SECTION: Other stuff
     /** Action layer */
@@ -439,5 +442,7 @@ PROC ui_action_create( ui_temp_action* arg ) -> uid;
  NOTE: Thread safe.
  NOTE: May return false if a mutex is busy*/
 PROC ui_action_triggered( uid action ) -> fresult;
+
+PROC ui_console_open( bool open_else_close ) -> void;
 
 }

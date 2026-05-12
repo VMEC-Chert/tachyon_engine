@@ -202,13 +202,15 @@ namespace tyon
                         // NOTE: Hardcoded text layer special casing
                         bool active_custom_layer = (layer_result.match_found &&
                                                     layer_result.match->inactive == false &&
-                                                    g_ui->console_input_on == false);
+                                                    g_ui->text_input_on == false);
                         // Is layer is unset its presumed its in the default global layer set
                         bool active_global_layer = (arg.action_layer.valid() == false &&
-                                                    g_ui->console_input_on == false);
-                        bool active_text_layer (g_ui->console_input_on &&
-                                                arg.id == g_ui->layer_text_input);
-                        bool active_layer = (active_custom_layer || active_global_layer);
+                                                    g_ui->text_input_on == false);
+                        bool active_text_layer (g_ui->text_input_on &&
+                                                arg.action_layer == g_ui->layer_text_input);
+                        bool active_layer = (
+                            active_custom_layer || active_global_layer || active_text_layer);
+
                         if (scancode_match && active_layer)
                         {   arg.triggered = true; }
                     });
@@ -290,8 +292,8 @@ namespace tyon
                     g_ui->input.mouse_delta = v2_f32{ e.xrel, e.yrel };
                     /* timestamp, windowID, SDL_MouseID which (unique mouse id),
                           SDL_MouseButtonFlags state, x, y, xrel, yrel */
-                    TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
-                               e.x, e.y, e.xrel, e.yrel );
+                    // TYON_LOGF( "Mouse motion: [{} {}] Relative Motion: [{} {}]",
+                               // e.x, e.y, e.xrel, e.yrel );
                     break;
                 }
                 case SDL_EVENT_TEXT_EDITING:
@@ -381,7 +383,7 @@ namespace tyon
         props.sdl_text = sdl::TTF_CreateText(
             g_sdl->text_engine, g_sdl->default_font, props.text.data(), props.text.size() );
         text_ok = bool(props.sdl_text);
-        TYON_LOG( "Rendering text" );
+        // TYON_LOG( "Rendering text" );
         ERROR_GUARD( props.sdl_text, "Major issue if false" );
 
         if (props.wrapped && text_ok)
