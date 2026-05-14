@@ -316,6 +316,7 @@ struct ui_drawable
 {
     uid id;
     fstring name;
+    /** Parent widget */
     uid widget;
     bool inactive = false;
 
@@ -328,6 +329,19 @@ struct ui_drawable
     /// All drawables must be backed by a mesh unless using raw image copies.
     mesh geometry;
 
+};
+
+struct ui_console
+{
+    uid root_widget;
+    uid log_drawable;
+    uid log_widget;
+    uid input_drawable;
+    uid input_widget;
+    uid background_drawable;
+
+    bool focused;
+    string input;
 };
 
 struct ui_input_state
@@ -389,7 +403,10 @@ struct ui_context
     ui_frame frame_prev;
     ui_frame frame;
 
+    // Widgets
+    ui_console console;
     uid tmp_bar;
+    uid console_wdget;
     uid console_drawable;
     render_image test_image;
 
@@ -443,6 +460,9 @@ PROC ui_action_create( ui_temp_action* arg ) -> uid;
  NOTE: May return false if a mutex is busy*/
 PROC ui_action_triggered( uid action ) -> fresult;
 
-PROC ui_console_open( bool open_else_close ) -> void;
+PROC ui_console_init( ui_console* arg ) -> fresult;
+
+/** Show and focus a single console instance, or the inverse if applicable */
+PROC ui_console_open( ui_console* context, bool open_else_close ) -> void;
 
 }

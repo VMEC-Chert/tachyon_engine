@@ -64,20 +64,7 @@ namespace tyon
         test_text->image_.id = uuid_generate();
 
         // Initialize graphical command console stuff
-        ui_drawable* console = entity_allocate<ui_drawable>( &g_ui->drawables);
-        g_ui->console_drawable = console->id;
-        auto console_widget = entity_allocate<ui_widget>( &g_ui->widgets );
-        console->text.text = "";
-        console->widget = text_widget->id;
-        console->type = e_ui_drawable::text;
-        console->name = console->image_.name = "console";
-        // Beeeeeeg box
-        // NOTE: wait why is the surface size determined by bounding box, isn't this dumb?
-        console->text.bounding_box = { 960.0, 700.0 };
-        console->image_.draw_box.position = { 0.0, 0.0 };
-
-        ui_drawable_init( console );
-        // ui_wdiget_init( console_widget );
+        ui_console_init( &g_ui->console );
 
         command command_2 = {
             .type = e_command::property,
@@ -136,7 +123,7 @@ namespace tyon
         }
 
         if (ui_action_triggered( g_ui->command_console_open ))
-        {   ui_console_open( !g_ui->console_input_on ); }
+        {   ui_console_open( &g_ui->console, !g_ui->console_input_on ); }
 
         ui_tick_end();
     }
@@ -190,6 +177,12 @@ namespace tyon
         {   TYON_ERROR( "Failed to find base widget associated with drawable widget" );
             return;
         }
+
+        // If we inherit inactive then this drawable is inactive too so we skip the tick entirely.
+        bool inactive_inherited = widget->inactive;
+        if (inactive_inherited) { return; }
+
+
         // TODO: Cache this result for high poly geometry
         // NOTE: Cache what???
         switch (arg->type)
@@ -332,7 +325,37 @@ namespace tyon
         return result_triggered;
     }
 
-    PROC ui_console_open( bool open_else_close ) -> void
+    PROC ui_console_init( ui_console* arg ) -> fresult
+    {
+        ui_widget* console_widget = entity_allocate<ui_widget>( &g_ui->widgets );
+        ui_drawable* input = entity_allocate<ui_drawable>( &g_ui->drawables );
+        ui_drawable* background = entity_allocate<ui_drawable>( &g_ui->drawables );
+        arg->input_drawable = input->id;
+        arg->root_widget = console_widget->id;
+        arg->background_drawable = background->id;
+
+        // Bind drawable to widget
+        input->widget = console_widget->id;
+        background->widget = console_widget->id;
+
+        background->name = "console_background";
+
+        input->text.text = "";
+        input->type = e_ui_drawable::text;
+        input->name = input->image_.name = "console_input";
+        // Beeeeeeg box
+        // NOTE: wait why is the surface size determined by bounding box, isn't this dumb?
+        input->text.bounding_box = { 960.0, 720.0 };
+        input->image_.draw_box.position = { 0.0, 0.0 };
+
+        ui_drawable_init( input );
+        ui_drawable_init( background );
+        // ui_wdiget_init( console_widget );
+
+        return false;
+    }
+
+    PROC ui_console_open( ui_console* context, bool open_else_close ) -> void
     {
         auto console_result = entity_search_name( &g_ui->drawables, "console" );
         tyon::g_ui->console_input_on = open_else_close;
