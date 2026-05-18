@@ -406,8 +406,6 @@ struct ui_context
     // Widgets
     ui_console console;
     uid tmp_bar;
-    uid console_wdget;
-    uid console_drawable;
     render_image test_image;
 
     bool console_input_on = false;

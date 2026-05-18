@@ -96,7 +96,7 @@ namespace tyon
         // TYON_LOG( g_ui->input.mouse_scroll.y );
 
         // Update console commands
-        auto console_s = entity_search_id( &g_ui->drawables, g_ui->console_drawable );
+        auto console_s = entity_search_id( &g_ui->drawables, g_ui->console.input_drawable );
         if (console_s.match_found)
         {   console_s.match->text.text = g_ui->console_input; }
 
@@ -180,8 +180,7 @@ namespace tyon
 
         // If we inherit inactive then this drawable is inactive too so we skip the tick entirely.
         bool inactive_inherited = widget->inactive;
-        if (inactive_inherited) { return; }
-
+        if (inactive_inherited || arg->inactive) { return; }
 
         // TODO: Cache this result for high poly geometry
         // NOTE: Cache what???
@@ -357,11 +356,11 @@ namespace tyon
 
     PROC ui_console_open( ui_console* context, bool open_else_close ) -> void
     {
-        auto console_result = entity_search_name( &g_ui->drawables, "console" );
+        auto console_result = entity_search_id( &g_ui->widgets, g_ui->console.root_widget );
         tyon::g_ui->console_input_on = open_else_close;
-        g_ui->text_input_on = g_ui->console_input_on;
+        g_ui->text_input_on = open_else_close;
         if (console_result.match_found)
-        {   console_result.match->inactive = (g_ui->console_input_on == false);  }
+        {   console_result.match->inactive = (! open_else_close);  }
         TYON_LOGF( "console_input_on: {}", g_ui->console_input_on );
     }
 
