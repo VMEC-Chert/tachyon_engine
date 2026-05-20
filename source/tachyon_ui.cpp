@@ -339,17 +339,11 @@ namespace tyon
     {
         ui_widget* console_widget = entity_allocate<ui_widget>( &g_ui->widgets );
         ui_drawable* input = entity_allocate<ui_drawable>( &g_ui->drawables );
-        ui_drawable* background = entity_allocate<ui_drawable>( &g_ui->drawables );
         arg->input_drawable = input->id;
         arg->root_widget = console_widget->id;
-        arg->background_drawable = background->id;
 
         // Bind drawable to widget
         input->widget = console_widget->id;
-        background->widget = console_widget->id;
-
-        background->name = "console_background";
-        background->type = e_ui_drawable::mesh;
 
         input->text.text = "";
         input->type = e_ui_drawable::text;
@@ -359,10 +353,11 @@ namespace tyon
         input->text.bounding_box = { 960.0, 720.0 };
         input->image_.draw_box.position = { 0.0, 0.0 };
 
-        arg->background_drawable = ui_drawable_create_box(
-            "command_console", arg->root_widget.id, {960.0f, 720.0f}, 0, 10 );
+        auto* background_drawable = ui_drawable_create_box(
+            "console_background", arg->root_widget.id, {960.0f, 720.0f}, 0, 10 );
+        arg->background_drawable = background_drawable->id;
         ui_drawable_init( input );
-        ui_drawable_init( background );
+        ui_drawable_init( background_drawable );
         // ui_wdiget_init( console_widget );
 
         return false;
@@ -379,9 +374,9 @@ namespace tyon
     }
 
     PROC ui_drawable_create_box(
-        fstring name, uid parent, v2 size, v2 position, i32 depth ) -> entity_uid<ui_drawable>
+        fstring name, uid parent, v2 size, v2 position, i32 depth ) -> ui_drawable*
     {
-        entity_uid<ui_drawable> result;
+        ui_drawable* result = nullptr;
 
         ui_drawable* box_drawable = entity_allocate<ui_drawable>( &g_ui->drawables );
         ui_widget* box_widget = entity_allocate<ui_widget>( &g_ui->widgets );
@@ -398,7 +393,7 @@ namespace tyon
         box_widget->transform.translation.z = position.y;
         box_drawable->depth = 10;
 
-        result = { box_drawable->id };
+        result = box_drawable;
         return result;
     }
 }

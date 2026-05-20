@@ -466,5 +466,5 @@ PROC ui_console_open( ui_console* context, bool open_else_close ) -> void;
 
 /** Returns an drawable uid */
 PROC ui_drawable_create_box(
-    fstring name, uid parent, v2 size, v2 position, i32 depth ) -> entity_uid<ui_drawable>;
+    fstring name, uid parent, v2 size, v2 position, i32 depth ) -> ui_drawable*;
 }
