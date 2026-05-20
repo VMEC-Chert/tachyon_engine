@@ -106,6 +106,8 @@ struct render_image
     box_2d draw_box;
     /** Changed API, it is now draw location / size. */
     box_2d draw_region;
+    /** Absolute display depth from -1 million to 1 million */
+    i32 depth = 0;
     time_monotonic_ns write_timestamp = time_now_ns();
     i64 write_version = 0;
 };

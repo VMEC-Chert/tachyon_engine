@@ -328,6 +328,7 @@ struct ui_drawable
     rgba color;
     /// All drawables must be backed by a mesh unless using raw image copies.
     mesh geometry;
+    i32 depth = 0;
 
 };
 
@@ -338,7 +339,7 @@ struct ui_console
     uid log_widget;
     uid input_drawable;
     uid input_widget;
-    uid background_drawable;
+    entity_uid<ui_drawable> background_drawable;
 
     bool focused;
     string input;
@@ -463,4 +464,7 @@ PROC ui_console_init( ui_console* arg ) -> fresult;
 /** Show and focus a single console instance, or the inverse if applicable */
 PROC ui_console_open( ui_console* context, bool open_else_close ) -> void;
 
+/** Returns an drawable uid */
+PROC ui_drawable_create_box(
+    fstring name, uid parent, v2 size, v2 position, i32 depth ) -> entity_uid<ui_drawable>;
 }

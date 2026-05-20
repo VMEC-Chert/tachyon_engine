@@ -2143,6 +2143,7 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
         // We can update this every time its just display configuration data
         vk_draw_image->draw_size = arg->draw_box.size;
         vk_draw_image->position = arg->draw_box.position;
+        vk_draw_image->depth = arg->depth;
 
         if (update_image)
         {
@@ -3625,6 +3626,7 @@ PROC vulkan_ui_blit_command_update_data(
                 uniform_data.position = draw_image->position;
                 uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
                                               g_render->ui_camera.sensor_size.y };
+                uniform_data.depth = draw_image->depth;
             }
             break;
         }

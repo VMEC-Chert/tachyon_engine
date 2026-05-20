@@ -12,6 +12,11 @@ namespace tyon
         }
         g_ui = memory_allocate<ui_context>(1);
 
+        /** Statically size array to prevent reallocation invalidation bugs */
+        g_ui->widgets.entities.change_allocation( 1000 );
+        g_ui->drawables.entities.change_allocation( 1000 );
+        g_ui->action_layers.entities.change_allocation( 1000 );
+
         // SECTION: Initialize keybinds and actions
         ui_action_layer* text_input = entity_allocate( &g_ui->action_layers );
         text_input->name = "text_input";
@@ -152,6 +157,10 @@ namespace tyon
         {   TYON_ERROR( "Drawable has no associated widget, did you forget to set it?" );
             return false;
         }
+        if (arg->type == e_ui_drawable::none)
+        {   TYON_ERRORF( "Drawable '{}' given no type {}", arg->name, arg->id );
+            return false;
+        }
         mesh_init( &arg->geometry );
         // NOTE: Well, this render image needs a uid but it isn't attached to
         // any enttiy list I'm not sure if this is the right way to be doing
@@ -181,6 +190,8 @@ namespace tyon
         // If we inherit inactive then this drawable is inactive too so we skip the tick entirely.
         bool inactive_inherited = widget->inactive;
         if (inactive_inherited || arg->inactive) { return; }
+        // TODO: Calculate depth based on widget hierarchy match widget, treat it as widget-local
+        arg->image_.depth = arg->depth;
 
         // TODO: Cache this result for high poly geometry
         // NOTE: Cache what???
@@ -338,6 +349,7 @@ namespace tyon
         background->widget = console_widget->id;
 
         background->name = "console_background";
+        background->type = e_ui_drawable::mesh;
 
         input->text.text = "";
         input->type = e_ui_drawable::text;
@@ -347,6 +359,8 @@ namespace tyon
         input->text.bounding_box = { 960.0, 720.0 };
         input->image_.draw_box.position = { 0.0, 0.0 };
 
+        arg->background_drawable = ui_drawable_create_box(
+            "command_console", arg->root_widget.id, {960.0f, 720.0f}, 0, 10 );
         ui_drawable_init( input );
         ui_drawable_init( background );
         // ui_wdiget_init( console_widget );
@@ -364,4 +378,27 @@ namespace tyon
         TYON_LOGF( "console_input_on: {}", g_ui->console_input_on );
     }
 
+    PROC ui_drawable_create_box(
+        fstring name, uid parent, v2 size, v2 position, i32 depth ) -> entity_uid<ui_drawable>
+    {
+        entity_uid<ui_drawable> result;
+
+        ui_drawable* box_drawable = entity_allocate<ui_drawable>( &g_ui->drawables );
+        ui_widget* box_widget = entity_allocate<ui_widget>( &g_ui->widgets );
+
+        box_drawable->name = name;
+        box_widget->name = name;
+        box_drawable->geometry = {
+            .name = name,
+            .vertexes = geometry_rectangle( vec2 {size.x, size.y} )
+        };
+        box_drawable->type = e_ui_drawable::mesh;
+        box_drawable->widget = box_widget->id;
+        box_widget->transform.translation.y = position.x;
+        box_widget->transform.translation.z = position.y;
+        box_drawable->depth = 10;
+
+        result = { box_drawable->id };
+        return result;
+    }
 }

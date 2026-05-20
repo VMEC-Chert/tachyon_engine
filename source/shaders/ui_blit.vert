@@ -10,6 +10,7 @@ struct vulkan_ui_blit_uniform
     vec2 position;
     vec2 surface_size;
     vec4 tint;
+    int depth;
 };
 
 layout(push_constant) uniform push_t
@@ -78,6 +79,8 @@ void main()
     float y_translated = y_scaled + (y_ratio * global.position.y);
     vert.x = x_translated;
     vert.y = y_translated;
+    // Rescale depth into 1.0
+    vert.z = (global.depth / 1000000.0);
 
     gl_Position = vert;
     uv_coord = uv;

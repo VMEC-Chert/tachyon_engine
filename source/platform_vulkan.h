@@ -40,6 +40,7 @@ struct alignas(16) vulkan_ui_blit_uniform
     v2_f32 surface_size;
     // 16 +8+8 +8+8 is 16 byte aligned
     v4_f32 tint;
+    i32 depth = 0;
 };
 
 struct vulkan_ui_blit_push
@@ -303,6 +304,7 @@ struct vulkan_image
     // TODO: These two are temporary
     v2_f32 draw_size;
     v2_f32 position;
+    i32 depth;
 
     transform_3d transform;
     time_monotonic_ns update_timestamp = 0;
