@@ -2182,6 +2182,70 @@ PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
     return true;
 }
 
+PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
+{
+    vulkan_mesh* vk_draw_mesh = nullptr;
+    vulkan_draw_command* draw_command = nullptr;
+
+    // Find the associated vulkan mesh
+    auto mesh_search = g_vulkan->meshes.linear_search( [draw_mesh]( vulkan_mesh& arg ) {
+        return arg.id == draw_mesh->id && arg.id.valid(); } );
+    vk_draw_mesh = mesh_search.match;
+    if (vk_draw_mesh == nullptr)
+    {   return false;  // TODO: Add trace logging
+    }
+
+    // Got a valid vulkan mesh, can start building a new draw command
+    draw_command = &frame->draw_queue_command.push_tail({});
+    draw_command->type = e_vulkan_draw::mesh;
+    // TODO: Needs to change when we have multiple pipelines per mesh
+    draw_command->pipeline = &g_vulkan->ui_mesh_pipeline;
+    draw_command->draw_mesh = vk_draw_mesh;
+    vulkan_draw_command_acquire_resource(
+        draw_command, frame, draw_command->pipeline, 1 );
+
+    auto resource_search = frame->resources.resources.linear_search(
+        [pipeline_id = g_vulkan->mesh_pipeline.id](vulkan_resources& arg) {
+            return arg.pipeline == pipeline_id;
+        });
+    if (resource_search.match_found)
+    {
+        vulkan_resources* resources = resource_search.match;
+        if (resources->sets_used <= resources->set_count)
+        {   VULKAN_ERRORF( "Ran out of mesh descriptor sets. Sets used: {}",
+                           resources->sets_used );
+            return false;
+        }
+        i32 allocated_set = resources->sets_used++;
+
+        // Update the descriptor resource associated with the uniform
+        VkDescriptorBufferInfo resource_buffer_info {
+            .buffer = frame->general_uniform_buffer.buffer,
+            .offset = 0,
+            .range = VK_WHOLE_SIZE
+        };
+
+        VkWriteDescriptorSet resource_write_args {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            // TODO: Hardcoded to the only set
+            .dstSet = draw_command->platform_sets[0],
+            .dstBinding = 0,
+            // NOTE: I think this is start index in the list of descriptors to use
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &resource_buffer_info,
+            .pTexelBufferView = nullptr
+        };
+        // Finalize the copy. No error return.
+        vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+        vk_draw_mesh->resource_update_timestamp = time_now_ns();
+    }
+    return true;
+}
+
 PROC vulkan_init() -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
@@ -3153,69 +3217,8 @@ PROC vulkan_start_frame() -> void
     // SECTION: Update descriptors for drawn objects
     for (i32 i=0; i < frame->draw_queue_mesh.size(); ++i)
     {
-        // SECTION: Select mesh for drawing
         mesh* draw_mesh = frame->draw_queue_mesh[i];
-        vulkan_mesh* vk_draw_mesh = nullptr;
-        vulkan_draw_command* draw_command = nullptr;
-
-        // Find the associated vulkan mesh
-        auto mesh_search = g_vulkan->meshes.linear_search( [draw_mesh]( vulkan_mesh& arg ) {
-            return arg.id == draw_mesh->id && arg.id.valid(); } );
-        vk_draw_mesh = mesh_search.match;
-        if (vk_draw_mesh == nullptr)
-        {   continue;  // TODO: Add trace logging
-        }
-
-        // Got a valid vulkan mesh, can start building a new draw command
-        draw_command = &frame->draw_queue_command.push_tail({});
-        draw_command->type = e_vulkan_draw::mesh;
-        // TODO: Needs to change when we have multiple pipelines per mesh
-        draw_command->pipeline = &g_vulkan->ui_mesh_pipeline;
-        draw_command->draw_mesh = vk_draw_mesh;
-        vulkan_draw_command_acquire_resource(
-            draw_command, frame, draw_command->pipeline, 1 );
-
-        auto resource_search = frame->resources.resources.linear_search(
-            [pipeline_id = g_vulkan->mesh_pipeline.id](vulkan_resources& arg) {
-                return arg.pipeline == pipeline_id;
-            });
-        if (resource_search.match_found)
-        {
-            vulkan_resources* resources = resource_search.match;
-            if (resources->sets_used <= resources->set_count)
-            {   VULKAN_ERRORF( "Ran out of mesh descriptor sets. Sets used: {}",
-                               resources->sets_used );
-                break;
-            }
-            i32 allocated_set = resources->sets_used++;
-
-            // Update the descriptor resource associated with the uniform
-            VkDescriptorBufferInfo resource_buffer_info {
-                .buffer = frame->general_uniform_buffer.buffer,
-                .offset = 0,
-                .range = VK_WHOLE_SIZE
-            };
-
-;
-            VkWriteDescriptorSet resource_write_args {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .pNext = nullptr,
-                // TODO: Hardcoded to the only set
-                .dstSet = draw_command->platform_sets[0],
-                .dstBinding = 0,
-                // NOTE: I think this is start index in the list of descriptors to use
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .pImageInfo = nullptr,
-                .pBufferInfo = &resource_buffer_info,
-                .pTexelBufferView = nullptr
-            };
-            // Finalize the copy. No error return.
-            vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
-            vk_draw_mesh->resource_update_timestamp = time_now_ns();
-        }
-
+        vulkan_mesh_prepare( draw_mesh, frame );
     }
 
     i32 i_command_limit = frame->draw_queue_command.size();
@@ -3282,6 +3285,7 @@ PROC vulkan_start_frame() -> void
         draw_image->resource_update_timestamp = time_now_ns();
 
         vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
+        vulkan_ui_mesh_command_update_data( frame, draw_command->pipeline, draw_command );
 
     }
 
@@ -3590,6 +3594,43 @@ PROC vulkan_draw_command_acquire_resource(
     memory_copy<VkDescriptorSet>(
         arg->platform_sets.data, (resources_search.match->sets.data + arg->set_index), count );
     return true;
+}
+
+PROC vulkan_ui_mesh_command_update_data(
+    vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
+    -> void
+{
+    switch (draw_command->type)
+    {
+        case e_vulkan_draw::mesh:
+        {
+            vulkan_mesh* draw_mesh = draw_command->draw_mesh;
+            if (draw_command == nullptr) { return; }
+
+            bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
+            if ( ! out_of_uniforms)
+            {
+                i32 acquired_uniform = frame->ui_mesh_uniforms_used++;
+                draw_command->uniform_index = acquired_uniform;
+                // This might look strange but I'm planning on making this generic in future
+                // So thinking about the code in terms of void pointers is useful.
+                // auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
+                // auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+                // TODO: hardcoded draw scale whilst trying to figure out API
+
+                // Fill out date
+            }
+            break;
+        }
+        case e_vulkan_draw::image:
+        {
+            break;
+        }
+        default:
+        {
+            break;
+        }
+    }
 }
 
 PROC vulkan_ui_blit_command_update_data(

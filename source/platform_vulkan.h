@@ -391,6 +391,7 @@ struct vulkan_frame
     vulkan_buffer blit_uniforms_buffer;
     // TODO: Temporary, don't need to be generic right now
     array<vulkan_ui_blit_uniform> blit_uniforms;
+    i32 ui_mesh_uniforms_used = 0;
     i32 blit_uniforms_used = 0;
 
     VkCommandBuffer command {};
@@ -614,6 +615,14 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
 PROC vulkan_draw_command_acquire_resource(
     vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline, i32 count ) -> fresult;
 
+/** Start-frame update to internal command data before starting recording into
+ * the Vulkan command queue */
+PROC vulkan_ui_mesh_command_update_data(
+    vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
+    -> void;
+
+/** Start-frame update to internal structures before starting recording into the
+ * Vulkan command queue */
 PROC vulkan_ui_blit_command_update_data(
     vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
     -> void;
