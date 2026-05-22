@@ -3221,73 +3221,7 @@ PROC vulkan_start_frame() -> void
         vulkan_mesh_prepare( draw_mesh, frame );
     }
 
-    i32 i_command_limit = frame->draw_queue_command.size();
-    for (i32 i=0; i < i_command_limit; ++i)
-    {
-        vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
-        vulkan_image* draw_image = draw_command->draw_image;
-        if (draw_image == nullptr || draw_command->platform_sets[0] == VK_NULL_HANDLE)
-        { g_vulkan->failed_descriptor_updates++; continue; }
-
-        // Transition the blit image a SHADER_READ_ONLY so the shader can read it
-        VkImageMemoryBarrier image_barrier =
-        {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            // no prior access needed for present → transfer
-            .srcAccessMask       = 0,
-            .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
-            // or UNDEFINED on first acquire
-            .oldLayout           = draw_image->platform_layout,
-            // We're writing so use transfer destination layout
-            .newLayout           = (draw_image->platform_layout =
-                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-            .image               = draw_image->platform_image,
-            .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-        };
-
-        vkCmdPipelineBarrier(
-            frame->command,
-            // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
-            // NOTE: Required flag when doing a barrier/transition inside a render pass
-            0x0,
-            0, nullptr,
-            0, nullptr,
-            1, &image_barrier
-        );
-
-
-        // Update descriptor sets if we need
-        // NOTE: Validation says it prefers descriptors to be updated before binding them
-        // NOTE: We setup descriptions per-draw command so we need to do this seperately to other logic
-        // But also do it after issuing transfers. But also before starting a render pass
-        // TODO: Do we need to synchronize this??
-        VkDescriptorImageInfo image_info {
-            .sampler = draw_command->pipeline->base_sampler,
-            .imageView = draw_image->platform_view,
-            .imageLayout = draw_image->platform_layout
-        };
-
-        VkWriteDescriptorSet resource_write_args {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = nullptr,
-            .dstSet = draw_command->platform_sets[0],
-            .dstBinding = 1,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = &image_info,
-            .pBufferInfo = nullptr,
-            .pTexelBufferView = nullptr
-        };
-        vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
-        draw_image->resource_update_timestamp = time_now_ns();
-
-        vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
-        vulkan_ui_mesh_command_update_data( frame, draw_command->pipeline, draw_command );
-
-    }
+    fresult command_bad = vulkan_command_update_data( frame );
 
     // Update all descriptors
     auto blit_uniform_bad = vulkan_transfer_queue_buffer(
@@ -3600,81 +3534,140 @@ PROC vulkan_ui_mesh_command_update_data(
     vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
     -> void
 {
-    switch (draw_command->type)
+    vulkan_mesh* draw_mesh = draw_command->draw_mesh;
+    if (draw_command == nullptr) { return; }
+
+    bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
+    if ( ! out_of_uniforms)
     {
-        case e_vulkan_draw::mesh:
-        {
-            vulkan_mesh* draw_mesh = draw_command->draw_mesh;
-            if (draw_command == nullptr) { return; }
+        i32 acquired_uniform = frame->ui_mesh_uniforms_used++;
+        draw_command->uniform_index = acquired_uniform;
+        // NOTE: This might look strange but I'm planning on making this generic in future
+        // So thinking about the code in terms of void pointers is useful.
+        auto uniforms = raw_pointer{ (void*)frame->ui_mesh_uniforms.data };
+        auto& uniform_data = uniforms.stride_as<vulkan_ui_mesh_uniform>( acquired_uniform );
+        // TODO: hardcoded draw scale whilst trying to figure out API
 
-            bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
-            if ( ! out_of_uniforms)
-            {
-                i32 acquired_uniform = frame->ui_mesh_uniforms_used++;
-                draw_command->uniform_index = acquired_uniform;
-                // This might look strange but I'm planning on making this generic in future
-                // So thinking about the code in terms of void pointers is useful.
-                // auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
-                // auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
-                // TODO: hardcoded draw scale whilst trying to figure out API
-
-                // Fill out date
-            }
-            break;
-        }
-        case e_vulkan_draw::image:
-        {
-            break;
-        }
-        default:
-        {
-            break;
-        }
+        // Fill out data we need in the uniform
     }
+}
+
+PROC vulkan_command_update_data( vulkan_frame* frame ) -> fresult
+{
+    i32 i_command_limit = frame->draw_queue_command.size();
+    for (i32 i=0; i < i_command_limit; ++i)
+    {
+        vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
+        vulkan_image* draw_image = draw_command->draw_image;
+        if (draw_image == nullptr || draw_command->platform_sets[0] == VK_NULL_HANDLE)
+        { g_vulkan->failed_descriptor_updates++; continue; }
+
+        // Transition the blit image a SHADER_READ_ONLY so the shader can read it
+        VkImageMemoryBarrier image_barrier =
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            // no prior access needed for present → transfer
+            .srcAccessMask       = 0,
+            .dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT,
+            // or UNDEFINED on first acquire
+            .oldLayout           = draw_image->platform_layout,
+            // We're writing so use transfer destination layout
+            .newLayout           = (draw_image->platform_layout =
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+            .image               = draw_image->platform_image,
+            .subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+        };
+
+        vkCmdPipelineBarrier(
+            frame->command,
+            // or COLOR_ATTACHMENT_OUTPUT_BIT if coming from render
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+            // NOTE: Required flag when doing a barrier/transition inside a render pass
+            0x0,
+            0, nullptr,
+            0, nullptr,
+            1, &image_barrier
+        );
+
+
+        // Update descriptor sets if we need
+        // NOTE: Validation says it prefers descriptors to be updated before binding them
+        // NOTE: We setup descriptions per-draw command so we need to do this seperately to other logic
+        // But also do it after issuing transfers. But also before starting a render pass
+        // TODO: Do we need to synchronize this??
+        VkDescriptorImageInfo image_info {
+            .sampler = draw_command->pipeline->base_sampler,
+            .imageView = draw_image->platform_view,
+            .imageLayout = draw_image->platform_layout
+        };
+
+        VkWriteDescriptorSet resource_write_args {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = draw_command->platform_sets[0],
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &image_info,
+            .pBufferInfo = nullptr,
+            .pTexelBufferView = nullptr
+        };
+        vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
+        draw_image->resource_update_timestamp = time_now_ns();
+
+        switch (draw_command->type)
+        {
+            case e_vulkan_draw::mesh:
+            {
+                // TODO: Change out these functions when we support more pipelines
+                vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
+                break;
+            }
+            case e_vulkan_draw::image:
+            {
+                vulkan_ui_mesh_command_update_data( frame, draw_command->pipeline, draw_command );
+                break;
+            }
+            default:
+            {
+                break;
+            }
+
+        }
+
+    }
+    return true;
 }
 
 PROC vulkan_ui_blit_command_update_data(
     vulkan_frame* frame, vulkan_pipeline* pipeline, vulkan_draw_command* draw_command )
     -> void
 {
-    switch (draw_command->type)
+    vulkan_image* draw_image = draw_command->draw_image;
+    if (draw_command == nullptr) { return; }
+
+    bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
+    if ( ! out_of_uniforms)
     {
-        case e_vulkan_draw::mesh:
-        {
-            break;
-        }
-        case e_vulkan_draw::image:
-        {
-            vulkan_image* draw_image = draw_command->draw_image;
-            if (draw_command == nullptr) { return; }
+        i32 acquired_uniform = frame->blit_uniforms_used++;
+        draw_command->uniform_index = acquired_uniform;
+        // This might look strange but I'm planning on making this generic in future
+        // So thinking about the code in terms of void pointers is useful.
+        auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
+        auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
+        // TODO: hardcoded draw scale whilst trying to figure out API
 
-            bool out_of_uniforms = frame->blit_uniforms_used >=(frame->blit_uniforms.size());
-            if ( ! out_of_uniforms)
-            {
-                i32 acquired_uniform = frame->blit_uniforms_used++;
-                draw_command->uniform_index = acquired_uniform;
-                // This might look strange but I'm planning on making this generic in future
-                // So thinking about the code in terms of void pointers is useful.
-                auto uniforms = raw_pointer{ (void*)frame->blit_uniforms.data };
-                auto& uniform_data = uniforms.stride_as<vulkan_ui_blit_uniform>( acquired_uniform );
-                // TODO: hardcoded draw scale whilst trying to figure out API
-
-                auto draw_size = draw_image->draw_size;
-                f32 tolerance = 0.1;
-                bool custom_draw_size = ((draw_size.x > tolerance) && (draw_size.y > tolerance));
-                uniform_data.size = draw_image->size;
-                uniform_data.draw_size = (custom_draw_size ? draw_size : draw_image->size);
-                uniform_data.position = draw_image->position;
-                uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
-                                              g_render->ui_camera.sensor_size.y };
-                uniform_data.depth = draw_image->depth;
-            }
-            break;
-        }
-        default:
-        {
-            break;
-        }
+        auto draw_size = draw_image->draw_size;
+        f32 tolerance = 0.1;
+        bool custom_draw_size = ((draw_size.x > tolerance) && (draw_size.y > tolerance));
+        uniform_data.size = draw_image->size;
+        uniform_data.draw_size = (custom_draw_size ? draw_size : draw_image->size);
+        uniform_data.position = draw_image->position;
+        uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
+                                      g_render->ui_camera.sensor_size.y };
+        uniform_data.depth = draw_image->depth;
     }
 }
 

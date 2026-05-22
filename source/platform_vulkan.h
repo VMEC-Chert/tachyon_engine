@@ -29,6 +29,17 @@ enum class e_vulkan_memory_object : i32
     image
 };
 
+
+/** Uniforms must be 16 byte aligned when std140 (OpenGL and Vulkan < 1.2) */
+struct alignas(16) vulkan_ui_mesh_uniform
+{
+    matrix transform = matrix::one();
+    v2_f32 surface_size;
+    // Uniform Base color, if applicable
+    v4_f32 uniform_color;
+    i32 debug_mode = 0;
+};
+
 /** Uniforms must be 16 byte aligned when std140 (OpenGL and Vulkan < 1.2) */
 struct alignas(16) vulkan_ui_blit_uniform
 {
@@ -391,6 +402,7 @@ struct vulkan_frame
     vulkan_buffer blit_uniforms_buffer;
     // TODO: Temporary, don't need to be generic right now
     array<vulkan_ui_blit_uniform> blit_uniforms;
+    array<vulkan_ui_mesh_uniform> ui_mesh_uniforms;
     i32 ui_mesh_uniforms_used = 0;
     i32 blit_uniforms_used = 0;
 
@@ -614,6 +626,10 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void;
 /** Allocate a new resource (descriptor set) just for this frame */
 PROC vulkan_draw_command_acquire_resource(
     vulkan_draw_command* arg, vulkan_frame* frame, vulkan_pipeline* pipeline, i32 count ) -> fresult;
+
+/** Start-frame update to internal command data before starting recording into
+    * the Vulkan command queue */
+PROC vulkan_command_update_data( vulkan_frame* frame ) -> fresult;
 
 /** Start-frame update to internal command data before starting recording into
  * the Vulkan command queue */
