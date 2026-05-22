@@ -3622,12 +3622,12 @@ PROC vulkan_command_update_data( vulkan_frame* frame ) -> fresult
             case e_vulkan_draw::mesh:
             {
                 // TODO: Change out these functions when we support more pipelines
-                vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
+                vulkan_ui_mesh_command_update_data( frame, draw_command->pipeline, draw_command );
                 break;
             }
             case e_vulkan_draw::image:
             {
-                vulkan_ui_mesh_command_update_data( frame, draw_command->pipeline, draw_command );
+                vulkan_ui_blit_command_update_data( frame, draw_command->pipeline, draw_command );
                 break;
             }
             default:
