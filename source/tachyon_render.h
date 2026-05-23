@@ -69,6 +69,8 @@ struct mesh
     i32 vertexes_n = 0;
     // Number of vertex indices
     i32 vertex_indexes_n = 0;
+    /** Tag specifies that we tried to initialize the a backing platform object atlaest once */
+    bool platform_init_tag = false;
 };
 
 #pragma pack(push, 1)

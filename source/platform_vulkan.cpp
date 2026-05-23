@@ -1602,6 +1602,8 @@ PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64
 PROC vulkan_mesh_init( mesh* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
+    // Tag that we tried to initialize this atlaest once
+    arg->platform_init_tag = true;
     // Initialize the mesh if it hasn't been done so already but don't worry if it's already been done.
     bool init_ok = (arg->id.valid() || mesh_init( arg ));
     bool mesh_uninitialized = (init_ok == false);
@@ -1744,7 +1746,7 @@ PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
     return result;
 }
 
-PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fresult
+PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
     /** NOTE: We are going to allocate an arbitrary amount of descriptor sets, say 2,000,
@@ -1829,6 +1831,15 @@ PROC vulkan_frame_init( vulkan_frame* arg, vulkan_pipeline* _delete_me ) -> fres
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     );
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->blit_uniforms_buffer );
+
+    i32 ui_mesh_uniforms = g_vulkan->ui_blit_pipeline.uniform_count;
+    arg->ui_mesh_uniforms.resize( ui_mesh_uniforms );
+    arg->ui_mesh_uniforms_buffer = vulkan_buffer_create(
+        "ui_blit_uniform",
+        sizeof( vulkan_ui_blit_uniform )* ui_mesh_uniforms,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+    );
+    vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->ui_mesh_uniforms_buffer );
 
     // TODO: Delete me
     // vulkan_memory_block& uniform_block = vulkan_memory_get_block(
@@ -2187,12 +2198,20 @@ PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
     vulkan_mesh* vk_draw_mesh = nullptr;
     vulkan_draw_command* draw_command = nullptr;
 
+    // Make sure we have create a valid vulkan mesh
+    if (draw_mesh->platform_init_tag == false)
+    {   vulkan_mesh_init( draw_mesh ); }
+    // Can't continue, have to bail early
+    if (draw_mesh->platform_init_tag == false)
+    {   return false; }
+
     // Find the associated vulkan mesh
     auto mesh_search = g_vulkan->meshes.linear_search( [draw_mesh]( vulkan_mesh& arg ) {
         return arg.id == draw_mesh->id && arg.id.valid(); } );
     vk_draw_mesh = mesh_search.match;
     if (vk_draw_mesh == nullptr)
-    {   return false;  // TODO: Add trace logging
+    {
+        return false;  // TODO: Add trace logging
     }
 
     // Got a valid vulkan mesh, can start building a new draw command
@@ -2204,10 +2223,17 @@ PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
     vulkan_draw_command_acquire_resource(
         draw_command, frame, draw_command->pipeline, 1 );
 
+    bool bad_first_resource = (draw_command->platform_sets[0] == VK_NULL_HANDLE);
+    if (bad_first_resource)
+    { TYON_BREAK();
+        return false;
+    }
+
     auto resource_search = frame->resources.resources.linear_search(
-        [pipeline_id = g_vulkan->mesh_pipeline.id](vulkan_resources& arg) {
+        [pipeline_id = draw_command->pipeline->id](vulkan_resources& arg) {
             return arg.pipeline == pipeline_id;
         });
+    // Update descriptor set
     if (resource_search.match_found)
     {
         vulkan_resources* resources = resource_search.match;
@@ -2959,7 +2985,7 @@ PROC vulkan_init() -> fresult
      NOTE: Dependant on descriptor resource data and pipeline data, must run afterwards */
     g_vulkan->frames_inflight.resize( g_vulkan->frames_inflight_count );
     g_vulkan->frames_inflight.map_procedure( []( vulkan_frame& arg ) {
-        vulkan_frame_init( &arg, &g_vulkan->mesh_pipeline ); });
+        vulkan_frame_init( &arg ); });
 
     result = true;
     g_vulkan->initialized = true;
@@ -3012,6 +3038,7 @@ PROC vulkan_frame_reset( vulkan_frame* frame ) -> void
     frame->draw_queue_image.reset();
     frame->draw_queue_mesh = g_render->draw_queue_mesh;
     frame->draw_queue_image = g_render->draw_queue_image;
+    frame->blit_uniforms_used = 0;
     frame->blit_uniforms_used = 0;
 
     // Reset resource allocations

@@ -400,6 +400,7 @@ struct vulkan_frame
     vulkan_buffer general_uniform_buffer;
 
     vulkan_buffer blit_uniforms_buffer;
+    vulkan_buffer ui_mesh_uniforms_buffer;
     // TODO: Temporary, don't need to be generic right now
     array<vulkan_ui_blit_uniform> blit_uniforms;
     array<vulkan_ui_mesh_uniform> ui_mesh_uniforms;
@@ -564,6 +565,8 @@ PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64;
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
 PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>;
+
+PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult;
 
 /** Initiaize a device memory manager */
 PROC vulkan_memory_init( vulkan_memory* arg ) -> fresult;
