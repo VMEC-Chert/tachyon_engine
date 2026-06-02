@@ -35,6 +35,7 @@ namespace tyon
             .name = "test_status_bar",
             .vertexes = geometry_rectangle( vec2 {1920.0, 24.0} )
         };
+        test_status_bar->inactive = true;
         test_status_bar->type = e_ui_drawable::mesh;
         test_status_bar->widget = test_status_widget->id;
         test_status_widget->transform.translation.z = 528 - 12;
@@ -342,6 +343,7 @@ namespace tyon
         arg->input_drawable = input->id;
         arg->root_widget = console_widget->id;
 
+        console_widget->name = "console_root";
         // Bind drawable to widget
         input->widget = console_widget->id;
 
@@ -354,7 +356,8 @@ namespace tyon
         input->image_.draw_box.position = { 0.0, 0.0 };
 
         auto* background_drawable = ui_drawable_create_box(
-            "console_background", arg->root_widget.id, {960.0f, 720.0f}, 0, 10 );
+            "console_background", arg->root_widget, {960.0f, 720.0f}, 0, 10 );
+        background_drawable->widget = arg->root_widget;
         arg->background_drawable = background_drawable->id;
         ui_drawable_init( input );
         ui_drawable_init( background_drawable );

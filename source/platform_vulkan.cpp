@@ -1670,6 +1670,10 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
         memory_copy<v3>( writehead + vertex_offset, vertex_readhead, 1 );
     }
 
+    vk_mesh->vertexes_n = arg->vertexes_n;
+    vk_mesh->faces_n = arg->faces_n;
+    vk_mesh->vertex_indexes_n = arg->vertex_indexes_n;
+
     VULKAN_LOGF( "Initialized vulkan_mesh Name: {}    UUID: {}", arg->name, arg->id );
     return true;
 }
@@ -2237,7 +2241,8 @@ PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
     if (resource_search.match_found)
     {
         vulkan_resources* resources = resource_search.match;
-        if (resources->sets_used <= resources->set_count)
+        bool out_of_descriptors = (resources->sets_used >= resources->set_count);
+        if (out_of_descriptors)
         {   VULKAN_ERRORF( "Ran out of mesh descriptor sets. Sets used: {}",
                            resources->sets_used );
             return false;
@@ -2987,6 +2992,9 @@ PROC vulkan_init() -> fresult
     g_vulkan->frames_inflight.map_procedure( []( vulkan_frame& arg ) {
         vulkan_frame_init( &arg ); });
 
+    // SECTION: Random Config Setup
+    g_vulkan->config.clear_color = g_vulkan->config.clear_black;
+
     result = true;
     g_vulkan->initialized = true;
     return result;
@@ -3314,13 +3322,10 @@ PROC vulkan_start_frame() -> void
 
 PROC vulkan_command_draw( vulkan_frame* frame ) -> void
 {
-    vulkan_pipeline* pipeline = &g_vulkan->mesh_pipeline;
     vulkan_swapchain* swapchain = &g_vulkan->swapchain;
 
     // Set render pass start information
-    VkClearValue clear_purple {{ 0.2f, 0.0f, 0.2f, 1.0f }};
-    VkClearValue clear_black {{ 0.0f, 0.0f, 0.0f, 0.0f }};
-    VkClearValue clear_value = clear_black;
+    VkClearValue clear_value = g_vulkan->config.clear_color;
     // VkClearValue clear_values[] = { clear_value, clear_value };
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3331,9 +3336,6 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     render_pass_args.clearValueCount = 1;
     render_pass_args.pClearValues = &clear_value;
     vkCmdBeginRenderPass( frame->command, &render_pass_args, VK_SUBPASS_CONTENTS_INLINE );
-    // Must bind pipeline before using it
-    vkCmdBindPipeline(
-        frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_pipeline );
 
     bool resize_viewport = true;
     if (resize_viewport)
@@ -3360,10 +3362,18 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         vkCmdSetScissor( frame->command, 0, 1, &scissor_config );
     }
 
+    // SECTION: Iterate over all draw commands
     i32 i_limit = clamp_u32( frame->draw_queue_command.size() );
+    vulkan_pipeline* pipeline = nullptr;
     for (i32 i=0; i < i_limit; ++i)
     {
+        // Set up variables for this draw_command
         vulkan_draw_command* draw_command = frame->draw_queue_command.address(i);
+        pipeline = draw_command->pipeline;
+        // Must bind pipeline before using it
+        vkCmdBindPipeline(
+            frame->command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->platform_pipeline );
+
         switch (draw_command->type)
         {
             case e_vulkan_draw::none: VULKAN_ERROR( "Passed draw command with 'none' type" ); break;
@@ -3380,7 +3390,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
                    command */
                 vulkan_mesh* vk_draw_mesh = draw_command->draw_mesh;
 
-                bool bad_resource = (draw_command->platform_sets[0] != VK_NULL_HANDLE ||
+                bool bad_resource = (draw_command->platform_sets[0] == VK_NULL_HANDLE ||
                                      vk_draw_mesh->resource_update_timestamp == 0);
                 // No point continuing  if our DescriptorSets are bad
                 if (bad_resource || vk_draw_mesh == nullptr)

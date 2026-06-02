@@ -64,6 +64,7 @@ struct vulkan_mesh_shader_push
     matrix local_space = matrix::one();
     v4_f32 base_color = v4_f32 { 0.4, 0.4, 0.4, 1.0 };
     e_vulkan_shader_debug debug_mode = e_vulkan_shader_debug::triangle_mosaic;
+    i32 uniform_index = 0;
 };
 
 struct vulkan_shader
@@ -416,6 +417,15 @@ struct vulkan_frame
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
     array< vulkan_draw_command > draw_queue_command;
+
+};
+
+struct vulkan_config
+{
+    VkClearValue clear_color {{ 0.0f, 0.0f, 0.0f, 0.0f }};
+
+    VkClearValue clear_purple {{ 0.2f, 0.0f, 0.2f, 1.0f }};
+    VkClearValue clear_black {{ 0.0f, 0.0f, 0.0f, 0.0f }};
 };
 
 struct vulkan_context
@@ -540,6 +550,9 @@ struct vulkan_context
     i64 frames_completed = 0;
     i64 failed_descriptor_updates = 0;
     i64 failed_draw_commands = 0;
+
+    // SECTION: Configurables
+    vulkan_config config;
 };
 
 PROC vulkan_allocator_create_callbacks( i_allocator* allocator );

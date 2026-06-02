@@ -1,7 +1,9 @@
 #version 430 core
 
+// NOTE: We changed the push constant layout from the old simple mesh shader days to support more
 layout(push_constant) uniform mesh {
     mat4 local_space;
+    vec2 surface_size;
     vec4 base_color;
     int debug_mode;
 } push;
@@ -108,7 +110,7 @@ mat4 create_rotation( vec4 euler )
               0,
               // Row 4
               0, 0, 0, 1);
-    return rotation_matrix * arbitraty_matrix;
+    return rotation_matrix;
 }
 
 vec4 perspective_divide( vec4 a )
