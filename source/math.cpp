@@ -423,12 +423,12 @@ PROC geometry_rectangle( v2 size /* TODO: front face direction */ ) -> array<v3>
     // Counter clockwise
     array<v3> result = {
         { 0.0, -half_w,  half_h },
-        { 0.0,  half_w,  half_h },
         { 0.0,  half_w, -half_h },
+        { 0.0,  half_w,  half_h },
 
         { 0.0, -half_w,  half_h },
-        { 0.0,  half_w, -half_h },
         { 0.0, -half_w, -half_h },
+        { 0.0,  half_w, -half_h },
     };
     return result;
 }
