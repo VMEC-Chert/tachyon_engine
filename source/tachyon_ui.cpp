@@ -348,6 +348,8 @@ namespace tyon
         arg->root_widget = console_widget->id;
 
         console_widget->name = "console_root";
+        // Start console invisible/inactive
+        console_widget->inactive = true;
         // Bind drawable to widget
         input->widget = console_widget->id;
 

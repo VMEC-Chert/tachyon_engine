@@ -44,7 +44,7 @@ namespace tyon
         *noto_sans_file = file_load_binary( "data/fonts/noto_sans/NotoSans-Regular.ttf" );
         SDL_IOStream* noto_sans_io = SDL_IOFromMem(
             noto_sans_file->memory.data, noto_sans_file->memory.size );
-        sdl::TTF_Font* noto_sans = sdl::TTF_OpenFontIO( noto_sans_io, true, 16 );
+        sdl::TTF_Font* noto_sans = sdl::TTF_OpenFontIO( noto_sans_io, true, 18 );
         sdl::TTF_SetFontHinting( noto_sans, sdl::TTF_HINTING_LIGHT_SUBPIXEL );
 
         g_sdl->default_font = noto_sans;

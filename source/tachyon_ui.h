@@ -342,6 +342,7 @@ struct ui_console
     entity_uid<ui_drawable> background_drawable;
 
     bool focused;
+    bool inactive;
     string input;
 };
 
