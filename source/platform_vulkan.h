@@ -481,6 +481,8 @@ struct vulkan_context
     array<vulkan_buffer> buffers;
     array<vulkan_frame> frames_inflight;
     vulkan_memory device_memory;
+
+    // TODO: Dead path for now, still useful
     i32 mesh_debug_mode_cycle = 0;
     e_vulkan_shader_debug mesh_debug_mode = e_vulkan_shader_debug::none;
 

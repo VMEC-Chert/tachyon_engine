@@ -205,6 +205,10 @@ namespace tyon
                 // TODO: Construct transform from widget hierarchy
                 arg->geometry.transform = widget->transform;
 
+                // TODO: 2D draw plane depth, not sure if this should be seperated for true 3D objects
+                // TODO: Propagate depth for parent hierarchy
+                arg->geometry.transform.translation.x = (-arg->depth / g_ui->depth_constant);
+
                 // Queue the drawable for drawing
                 g_render->draw_queue_mesh.push_tail( &arg->geometry );
             }

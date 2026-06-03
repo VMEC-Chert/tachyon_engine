@@ -3704,7 +3704,7 @@ PROC vulkan_ui_blit_command_update_data(
         uniform_data.position = draw_image->position;
         uniform_data.surface_size = { g_render->ui_camera.sensor_size.x,
                                       g_render->ui_camera.sensor_size.y };
-        uniform_data.depth = draw_image->depth;
+        uniform_data.depth = -draw_image->depth;
     }
 }
 
