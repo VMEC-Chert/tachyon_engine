@@ -553,6 +553,21 @@ struct vulkan_context
     i64 failed_descriptor_updates = 0;
     i64 failed_draw_commands = 0;
 
+    // Transparent mask
+    VkPipelineColorBlendAttachmentState ui_blend_attachment {
+        .blendEnable = VK_TRUE,
+        // TODO: No idea what these factors should be
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD, // Optional
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        // TODO: Previously OP_SUBTRACT, testing
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = (
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT),
+    };
     // SECTION: Configurables
     vulkan_config config;
 };
