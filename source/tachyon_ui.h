@@ -414,7 +414,7 @@ struct ui_context
     bool text_input_on = false;
     fstring console_input;
 
-    f32 depth_constant = 1000000.0;
+    f32 depth_constant = 10000.0;
 };
 
 extern ui_context* g_ui;

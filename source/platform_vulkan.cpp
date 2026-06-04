@@ -507,6 +507,22 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
         vkDestroyPipelineLayout( g_vulkan->logical_device, arg->platform_layout,
                                  g_vulkan->vk_allocator );
     });
+    VkPipelineDepthStencilStateCreateInfo depth_args {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0x0,
+        .depthTestEnable = true,
+        .depthWriteEnable = true,
+        .depthCompareOp = VK_COMPARE_OP_LESS,
+        .depthBoundsTestEnable = false,
+        // Stencil Config
+        .stencilTestEnable = false,
+        .front = {},
+        .back = {},
+
+        .minDepthBounds = {},
+        .maxDepthBounds = {},
+    };
 
     /* SECTION: Pipeline creation args
      *
@@ -521,7 +537,8 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
     pipeline_args.pViewportState = &viewport_args;
     pipeline_args.pRasterizationState = &raster_args;
     pipeline_args.pMultisampleState = &multisample_args;
-    // pipeline_args.pDepthStencilState = nullptr; // Optional
+    // Enable depth testing
+    pipeline_args.pDepthStencilState = &depth_args;
     pipeline_args.pColorBlendState = &color_blend_args;
     pipeline_args.pDynamicState = &dynamic_state_args;
     pipeline_args.layout = arg->platform_layout;
@@ -817,6 +834,23 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
                                  g_vulkan->vk_allocator );
     });
 
+    VkPipelineDepthStencilStateCreateInfo depth_args {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0x0,
+        .depthTestEnable = true,
+        .depthWriteEnable = true,
+        .depthCompareOp = VK_COMPARE_OP_LESS,
+        .depthBoundsTestEnable = false,
+        // Stencil Config
+        .stencilTestEnable = false,
+        .front = {},
+        .back = {},
+
+        .minDepthBounds = {},
+        .maxDepthBounds = {},
+    };
+
     /* SECTION: Pipeline creation args
      *
      * Now We have all the pipeline information set we can assemble it into
@@ -830,7 +864,8 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     pipeline_args.pViewportState = &viewport_args;
     pipeline_args.pRasterizationState = &raster_args;
     pipeline_args.pMultisampleState = &multisample_args;
-    // pipeline_args.pDepthStencilState = nullptr; // Optional
+    // Enable depth testing
+    pipeline_args.pDepthStencilState = &depth_args;
     pipeline_args.pColorBlendState = &color_blend_args;
     pipeline_args.pDynamicState = &dynamic_state_args;
     pipeline_args.layout = arg->platform_layout;
@@ -2230,6 +2265,11 @@ PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
     draw_command->draw_mesh = vk_draw_mesh;
     vulkan_draw_command_acquire_resource(
         draw_command, frame, draw_command->pipeline, 1 );
+
+    // SECTION: Update any transient data from mesh
+    vk_draw_mesh->transform = draw_mesh->transform;
+
+    // SECTION: Update any cached data from mesh
 
     bool bad_first_resource = (draw_command->platform_sets[0] == VK_NULL_HANDLE);
     if (bad_first_resource)
