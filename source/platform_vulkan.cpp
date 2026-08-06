@@ -185,6 +185,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
 PROC vulkan_label_object( u64 handle, VkObjectType type, fstring name ) -> void
 {
     PROFILE_SCOPE_FUNCTION();
+    if (handle == 0) { return; }
     // NOTE: This is the depreceated version of the struct/function, this crashed when I used it.
     // VkDebugMarkerObjectNameInfoEXT name_args {};
     char* s = memory_allocate_raw( name.size() + 1 );
@@ -1053,15 +1054,16 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
         vulkan_label_object( (u64)swapchain_image_views[i], VK_OBJECT_TYPE_IMAGE_VIEW,
                              fmt::format( "{}_swapchain_image_view_{}", arg->name, i ) );
 
-        VkImageView attachments[] = {
-            swapchain_image_views[i]
+        VkImageView image_attachments[] = {
+            swapchain_image_views[i],
+            g_vulkan->render_target->depth_image_views[i]
         };
 
         VkFramebufferCreateInfo framebuffer_args{};
         framebuffer_args.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_args.renderPass = self->render_pass;
         framebuffer_args.attachmentCount = 1;
-        framebuffer_args.pAttachments = attachments;
+        framebuffer_args.pAttachments = image_attachments;
         framebuffer_args.width = arg->vk_present_size.width;
         framebuffer_args.height = arg->vk_present_size.height;
         framebuffer_args.layers = 1;
@@ -1789,6 +1791,51 @@ PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
     return result;
 }
 
+/** Allocates and initializes an depth buffer/image entity */
+PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
+{
+    monad<vulkan_image*> result;
+     VkImageCreateInfo image_args {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        /** RGBA Follows endianness. This is allowed for the transfer image but not the swapchain image
+
+        NOTE: This is a depth specific 32-bit float layout */
+        .format = VK_FORMAT_D32_SFLOAT,
+        .extent = VkExtent3D { u32(g_render->ui_camera.sensor_size.x),
+                               u32(g_render->ui_camera.sensor_size.x),
+                               1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        /* NOTE: We use our images as both transfer source and destination */
+        .usage = (VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT),
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+
+    vulkan_image* image = &g_vulkan->images.push_tail({});
+    // NOTE: Stencil's don't typically have an associated image so we won't reference once
+    // NOTE: Still set the layout though
+    image->platform_layout = image_args.initialLayout;
+    VkResult image_bad = vkCreateImage(
+        g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
+    if (image_bad)
+    {
+        VULKAN_ERROR( "Failed to create stencil image: {}",string_VkResult(image_bad) );
+        return monad<vulkan_image*> { nullptr, true };
+    }
+    VULKAN_LOG( "Created depth/stencil image" );
+    // Return new image from function
+    result.value = image;
+    return result;
+}
+
 PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
@@ -2328,6 +2375,7 @@ PROC vulkan_init() -> fresult
     g_vulkan = memory_allocate<vulkan_context>( 1 );
 
     g_vulkan->allocator = &g_vulkan->default_allocator;
+    g_vulkan->render_target = entity_allocate( &g_vulkan->render_targets );
 
     auto self = g_vulkan;
     auto& instance = g_vulkan->instance;
@@ -2909,24 +2957,81 @@ PROC vulkan_init() -> fresult
        framebuffer, each pipeline could have its own or use a shared
        framebuffer. */
 
-    // Create a render pass, will be passed to pipeline
-    VkAttachmentDescription color_attachment {};
-    color_attachment.format = self->swapchain_image_format;
-    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    // Load the previous content of the framebuffer/input attachment
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    // PURPOSE: Create a depth buffer for attachment for each swapchain image
+    // NOTE: Need to create depth buffer before referencing data in attachments and refs
+    // NOTE: Just accept it as nullptr if depth buffer it wasn't created successfully
+    i32 i_limit_frames = g_vulkan->render_target->frames_inflight;
+    g_vulkan->render_target->depth_images.resize( i_limit_frames );
+    g_vulkan->render_target->depth_image_views.resize( i_limit_frames );
+    for (i32 i=0; i < i_limit_frames; ++i)
+    {
+        vulkan_image* depth_buffer_image = vulkan_image_depth_allocate().value;
+        if (depth_buffer_image == nullptr)
+        {   VULKAN_ERROR( "Failed to create depth buffer, bailing" );
+            return false;
+        }
+        // VkImage depth_buffer = depth_buffer_image->platform_image; TODO delete?
+        g_vulkan->render_target->depth_images[i] = depth_buffer_image;
 
-    // Only need one color attachment?
+        VkImageView depth_buffer_view {};
+        VkImageViewCreateInfo view_args{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = 0,
+            .flags = 0,
+            .image = depth_buffer_image->platform_image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = depth_buffer_image->platform_format,
+            .components { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, },
+            .subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .subresourceRange.baseMipLevel = 0,
+            .subresourceRange.levelCount = 1,
+            .subresourceRange.baseArrayLayer = 0,
+            .subresourceRange.layerCount = 1,
+        };
+
+        VkResult view_error = vkCreateImageView(
+            g_vulkan->logical_device, &view_args, g_vulkan->vk_allocator, &depth_buffer_view );
+        fstring debug_name = fmt::format( "{}_depth_image_view_{}", "unnamed", i );
+        if (depth_buffer_view == VK_NULL_HANDLE)
+        {   VULKAN_ERRORF( "Failed to create depth buffer: {}", debug_name );
+            return false;
+        }
+        // Only label it after the object exists
+        vulkan_label_object( (u64)depth_buffer_view, VK_OBJECT_TYPE_IMAGE_VIEW, debug_name );
+        g_vulkan->render_target->depth_image_views[i] = depth_buffer_view;
+    }
+
+    // NOTE: References index in future attachment layout list
+    VkAttachmentReference depth_attachment_refs {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    };
+
+    // Create a render pass, will be passed to pipeline
+    array<VkAttachmentDescription> pass_attachments {
+        // Depth attachment
+        VkAttachmentDescription {
+            .format = g_vulkan->render_target->depth_images[0]->platform_format,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            // Clear the previous content of this buffer
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            // Skip operation
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            // Skip operation
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        }
+    };
+
+    // Not used right now, this is if you want to add extra layers like pixel tagging
     array<VkAttachmentReference> color_attachment_refs {
-        VkAttachmentReference {
-            .attachment = 0,
-            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        },
+        // VkAttachmentReference {
+        //     .attachment = 0,
+        //     .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        // },
     };
     array<VkAttachmentReference> input_attachment_refs {
         // NOTE: This was when testing image compositing I don't think we need this anymore
@@ -2943,13 +3048,14 @@ PROC vulkan_init() -> fresult
     sub_pass.inputAttachmentCount = 0;
     sub_pass.pColorAttachments = color_attachment_refs.data;
     sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
+    sub_pass.pDepthStencilAttachment = &depth_attachment_refs;
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
     VkRenderPassCreateInfo pass_args{};
     pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     pass_args.attachmentCount = 1;
-    pass_args.pAttachments = &color_attachment;
-    pass_args.subpassCount = 1;
+    pass_args.pAttachments = pass_attachments.data;
+    pass_args.subpassCount = pass_attachments.size();
     pass_args.pSubpasses = &sub_pass;
 
     auto pass_ok = vkCreateRenderPass(

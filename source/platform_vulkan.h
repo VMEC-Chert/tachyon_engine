@@ -310,7 +310,7 @@ struct vulkan_image
 {
     uid id;
     uid associated_image;
-    VkImage platform_image;
+    VkImage platform_image = VK_NULL_HANDLE;
     vec2_i64 size_;
     v2_f32 size;
     // TODO: These two are temporary
@@ -332,6 +332,8 @@ struct vulkan_image
     i32 uniform_index = 0;
     /** Current tracked layout */
     VkImageLayout platform_layout;
+    /** Pixel Channel Layout */
+    VkFormat platform_format;
     VkImageView platform_view;
     i64 last_frame_used = 0;
     bool destroyed = false;
@@ -420,6 +422,20 @@ struct vulkan_frame
 
 };
 
+struct vulkan_render_target
+{
+    uid id;
+    fstring name;
+    // TODO: Change these to entity references
+    // array<vulkan_frame*> frames;
+    i32 frames_inflight = 3;
+    /** Index of current frame being worked on for this render target */
+    i32 frames_inflight_i = 0;
+    vulkan_swapchain* swapchain;
+    array<vulkan_image*> depth_images;
+    array<VkImageView> depth_image_views;
+};
+
 struct vulkan_config
 {
     VkClearValue clear_color {{ 0.0f, 0.0f, 0.0f, 0.0f }};
@@ -472,7 +488,11 @@ struct vulkan_context
     // A pointer to the callback, may be null to turn it off
     VkAllocationCallbacks* vk_allocator = nullptr;
     i32 frames_inflight_count = 3;
+    // TODO:  This should be moved in a render target context
     vulkan_swapchain swapchain;
+    /** Primary render target */
+    vulkan_render_target* render_target;
+    entity_list<vulkan_render_target> render_targets;
 
     array<mesh*> tmp_meshes;
     array<vulkan_mesh> meshes;
@@ -574,6 +594,9 @@ struct vulkan_context
 
 PROC vulkan_allocator_create_callbacks( i_allocator* allocator );
 
+/** Applies a debug label to an object.
+
+ Safe to pass VK_NULL_HANDLE or 0. */
 PROC vulkan_label_object( u64 handle, VkObjectType type, fstring name ) -> void;
 
 PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchain )
