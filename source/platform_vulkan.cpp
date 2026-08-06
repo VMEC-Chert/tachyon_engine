@@ -1818,7 +1818,7 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
      bool extent_zero = (image_args.extent.width == image_args.extent.height);
      if (extent_zero)
@@ -1840,6 +1840,9 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         return monad<vulkan_image*> { nullptr, true };
     }
     VULKAN_LOG( "Created depth/stencil image" );
+
+    bool suballocate_ok = vulkan_memory_allocate_image( &g_vulkan->device_memory, image );
+
     // Return new image from function
     result.value = image;
     return result;
