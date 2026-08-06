@@ -602,7 +602,7 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
     for (i64 i=0; i < arg->shaders.size(); ++i)
     {
         auto& x_shader = arg->shaders[i];
-        stages.push_tail( VkPipelineShaderStageCreateInfo {
+        auto& shader_args = stages.push_tail( VkPipelineShaderStageCreateInfo {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                 .stage = x_shader.stage_flag,
                 .vk_module = x_shader.platform_module,
@@ -1805,7 +1805,7 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         NOTE: This is a depth specific 32-bit float layout */
         .format = VK_FORMAT_D32_SFLOAT,
         .extent = VkExtent3D { u32(g_render->ui_camera.sensor_size.x),
-                               u32(g_render->ui_camera.sensor_size.x),
+                               u32(g_render->ui_camera.sensor_size.y),
                                1 },
         .mipLevels = 1,
         .arrayLayers = 1,
@@ -1820,6 +1820,13 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         .pQueueFamilyIndices = nullptr,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
+     bool extent_zero = (image_args.extent.width == image_args.extent.height);
+     if (extent_zero)
+     {  VULKAN_LOGF( "image extent x and y are the same [{} {}], Vulkan on nVIDIA doesn't like this",
+         image_args.extent.width, image_args.extent.height  );
+         result.error = true;
+         return result;
+     }
 
     vulkan_image* image = &g_vulkan->images.push_tail({});
     // NOTE: Stencil's don't typically have an associated image so we won't reference once
@@ -1961,9 +1968,10 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     return true;
 }
 
-PROC vulkan_init_pipelines() -> void
+PROC vulkan_init_pipelines() -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
+    bool success_flag = false;
     // Create shaders of pipeline
     {
         vulkan_shader vertex_shader {};
@@ -1978,8 +1986,9 @@ PROC vulkan_init_pipelines() -> void
         fragment_shader.code_binary = true;
         fragment_shader.stage_flag = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        vulkan_shader_init( &vertex_shader );
-        vulkan_shader_init( &fragment_shader );
+        fresult vertex_ok = vulkan_shader_init( &vertex_shader );
+        fresult fragment_ok = vulkan_shader_init( &fragment_shader );
+        success_flag &= (vertex_ok &  fragment_ok);
 
         vulkan_pipeline& pipeline = g_vulkan->mesh_pipeline;
         pipeline.shaders.push_tail( vertex_shader );
@@ -1999,8 +2008,9 @@ PROC vulkan_init_pipelines() -> void
         fragment_shader.code_binary = true;
         fragment_shader.stage_flag = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        vulkan_shader_init( &vertex_shader );
-        vulkan_shader_init( &fragment_shader );
+        fresult vertex_ok = vulkan_shader_init( &vertex_shader );
+        fresult fragment_ok = vulkan_shader_init( &fragment_shader );
+        success_flag &= (vertex_ok &  fragment_ok);
 
         vulkan_pipeline& pipeline = g_vulkan->ui_mesh_pipeline;
         pipeline.shaders.push_tail( vertex_shader );
@@ -2020,14 +2030,19 @@ PROC vulkan_init_pipelines() -> void
         fragment_shader.code_binary = true;
         fragment_shader.stage_flag = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        vulkan_shader_init( &vertex_shader );
-        vulkan_shader_init( &fragment_shader );
+        fresult vertex_ok = vulkan_shader_init( &vertex_shader );
+        fresult fragment_ok = vulkan_shader_init( &fragment_shader );
+        success_flag &= (vertex_ok &  fragment_ok);
 
         vulkan_pipeline& pipeline = g_vulkan->ui_blit_pipeline;
         pipeline.shaders.push_tail( vertex_shader );
         pipeline.shaders.push_tail( fragment_shader );
         vulkan_pipeline_blit_init( &pipeline );
     }
+    if (success_flag)
+    {   VULKAN_ERROR( "Failed to create pipeline" );
+    }
+    return (! success_flag);
 }
 
 PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult
@@ -3137,7 +3152,8 @@ PROC vulkan_init() -> fresult
 
     // Create primary generic pipeline
     g_vulkan->common_resource_pool = frame_descriptor_pool;
-    vulkan_init_pipelines();
+    fresult pipeline_ok = vulkan_init_pipelines();
+    if (pipeline_ok == false) { return false; }
 
     /* Create per-frame data, we may have more than one frame going at once and per-frame resources
      NOTE: Dependant on descriptor resource data and pipeline data, must run afterwards */

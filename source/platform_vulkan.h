@@ -599,6 +599,9 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator );
  Safe to pass VK_NULL_HANDLE or 0. */
 PROC vulkan_label_object( u64 handle, VkObjectType type, fstring name ) -> void;
 
+/** Mesh specific pipeline initialization */
+PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult;
+
 PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchain )
     -> fresult;
 
@@ -645,7 +648,7 @@ PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) 
 
 PROC vulkan_memory_allocate_image( vulkan_memory* arg, vulkan_image* image ) -> fresult;
 
-PROC vulkan_init_pipelines() -> void;
+PROC vulkan_init_pipelines() -> fresult;
 
 /** Does nothing at present. You SHOULD call it anyway */
 PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult;
