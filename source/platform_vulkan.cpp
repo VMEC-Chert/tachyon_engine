@@ -1055,8 +1055,10 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
                              fmt::format( "{}_swapchain_image_view_{}", arg->name, i ) );
 
         VkImageView image_attachments[] = {
-            swapchain_image_views[i],
             g_vulkan->render_target->depth_image_views[i]
+            // NOTE: Swapchain image view unused, I think it was for reading
+            // pixels from previous frames.  Which we no longer use
+            // swapchain_image_views[i],
         };
 
         VkFramebufferCreateInfo framebuffer_args{};
@@ -2960,6 +2962,7 @@ PROC vulkan_init() -> fresult
     // PURPOSE: Create a depth buffer for attachment for each swapchain image
     // NOTE: Need to create depth buffer before referencing data in attachments and refs
     // NOTE: Just accept it as nullptr if depth buffer it wasn't created successfully
+    // TODO: This needs to be split out into per vulkan_render_target initialization
     i32 i_limit_frames = g_vulkan->render_target->frames_inflight;
     g_vulkan->render_target->depth_images.resize( i_limit_frames );
     g_vulkan->render_target->depth_image_views.resize( i_limit_frames );
@@ -3010,7 +3013,7 @@ PROC vulkan_init() -> fresult
 
     // Create a render pass, will be passed to pipeline
     array<VkAttachmentDescription> pass_attachments {
-        // Depth attachment
+        // 0 - depth_attachment
         VkAttachmentDescription {
             .format = g_vulkan->render_target->depth_images[0]->platform_format,
             .samples = VK_SAMPLE_COUNT_1_BIT,
