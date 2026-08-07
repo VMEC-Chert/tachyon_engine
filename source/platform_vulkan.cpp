@@ -1818,7 +1818,9 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
-        .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        // NOTE: Don't worry about this, it will be transited by the attachment description.
+        // NOTE: You can use zero initialized or pre-initialized instead
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
      bool extent_zero = (image_args.extent.width == image_args.extent.height);
      if (extent_zero)

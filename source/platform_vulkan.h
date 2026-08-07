@@ -54,12 +54,12 @@ struct alignas(16) vulkan_ui_blit_uniform
     i32 depth = 0;
 };
 
-struct vulkan_ui_blit_push
+struct alignas(16) vulkan_ui_blit_push
 {
     i32 uniform_index = 0;
 };
 
-struct vulkan_mesh_shader_push
+struct alignas(16) vulkan_mesh_shader_push
 {
     matrix local_space = matrix::one();
     v4_f32 base_color = v4_f32 { 0.4, 0.4, 0.4, 1.0 };
