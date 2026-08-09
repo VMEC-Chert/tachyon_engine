@@ -3055,7 +3055,7 @@ PROC vulkan_init() -> fresult
             // Skip operation
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
             .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout    = VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR,
+            .finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         },
         // 1 - depth buffer
         VkAttachmentDescription {
