@@ -61,6 +61,7 @@ struct alignas(16) vulkan_ui_blit_push
 
 struct alignas(16) vulkan_mesh_shader_push
 {
+    // TODO: Needs to be simplified
     matrix local_space = matrix::one();
     v4_f32 base_color = v4_f32 { 0.4, 0.4, 0.4, 1.0 };
     e_vulkan_shader_debug debug_mode = e_vulkan_shader_debug::triangle_mosaic;

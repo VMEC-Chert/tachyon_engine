@@ -465,6 +465,7 @@ PROC vulkan_pipeline_mesh_init( vulkan_pipeline* arg ) -> fresult
         .offset = 0,
         .size = sizeof(  vulkan_mesh_shader_push )
     };
+    VULKAN_LOGF( "Using push constant of range {} for pipeline {}",push_constant_range.size, arg->name );
 
     /* Pipeline Layout: "An object defining the set of resources (via a
        collection of descriptor set layouts) and push constants used by
@@ -791,6 +792,8 @@ PROC vulkan_pipeline_blit_init( vulkan_pipeline* arg ) -> fresult
         .offset = 0,
         .size = sizeof(  vulkan_ui_blit_push )
     };
+    VULKAN_LOGF( "Using push constant of range {} for pipeline {}",
+                 push_constant_range.size, arg->name );
 
     /* Pipeline Layout: "An object defining the set of resources (via a
        collection of descriptor set layouts) and push constants used by
@@ -1054,18 +1057,22 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
         vulkan_label_object( (u64)swapchain_image_views[i], VK_OBJECT_TYPE_IMAGE_VIEW,
                              fmt::format( "{}_swapchain_image_view_{}", arg->name, i ) );
 
-        VkImageView image_attachments[] = {
+        array<VkImageView> image_attachments = {
+            /** NOTE: I'm a little confused on the purpose of a swapchain image
+            view, it's implied you would use it for reading and writing
+            directly, which I do not use right now. I was following Vulkan
+            tutorial but I don't think its always needed, but may be useful
+            later on., it might be actually required to display images to the
+            screen but its just not clear. */
+            swapchain_image_views[i],
             g_vulkan->render_target->depth_image_views[i]
-            // NOTE: Swapchain image view unused, I think it was for reading
-            // pixels from previous frames.  Which we no longer use
-            // swapchain_image_views[i],
         };
 
         VkFramebufferCreateInfo framebuffer_args{};
         framebuffer_args.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_args.renderPass = self->render_pass;
-        framebuffer_args.attachmentCount = 1;
-        framebuffer_args.pAttachments = image_attachments;
+        framebuffer_args.attachmentCount = image_attachments.size();
+        framebuffer_args.pAttachments =  image_attachments.data;
         framebuffer_args.width = arg->vk_present_size.width;
         framebuffer_args.height = arg->vk_present_size.height;
         framebuffer_args.layers = 1;
@@ -1833,7 +1840,10 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
     vulkan_image* image = &g_vulkan->images.push_tail({});
     // NOTE: Stencil's don't typically have an associated image so we won't reference once
     // NOTE: Still set the layout though
+    // NOTE: Update image data to follow requested image that is going to be created
     image->platform_layout = image_args.initialLayout;
+    image->platform_format = image_args.format;
+
     VkResult image_bad = vkCreateImage(
         g_vulkan->logical_device, &image_args, g_vulkan->vk_allocator, &image->platform_image );
     if (image_bad)
@@ -3027,25 +3037,39 @@ PROC vulkan_init() -> fresult
 
     // NOTE: References index in future attachment layout list
     VkAttachmentReference depth_attachment_refs {
-        .attachment = 0,
+        .attachment = 1,
         .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
     };
 
     // Create a render pass, will be passed to pipeline
     array<VkAttachmentDescription> pass_attachments {
-        // 0 - depth_attachment
+        // 0 - swapchain framebuffer
         VkAttachmentDescription {
-            .format = g_vulkan->render_target->depth_images[0]->platform_format,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .format         = g_vulkan->swapchain_image_format,
+            .samples        = VK_SAMPLE_COUNT_1_BIT,
             // Clear the previous content of this buffer
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
             // Skip operation
-            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             // Skip operation
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        },
+        // 1 - depth buffer
+        VkAttachmentDescription {
+            .format         = g_vulkan->render_target->depth_images[0]->platform_format,
+            .samples        = VK_SAMPLE_COUNT_1_BIT,
+            // Clear the previous content of this buffer
+            .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
+            // Skip operation
+            .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            // Skip operation
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         }
     };
 
@@ -3067,18 +3091,22 @@ PROC vulkan_init() -> fresult
 
     // sub-pass first
     VkSubpassDescription sub_pass {};
+    // NOTE: This was missing before, how did I miss this????
+    sub_pass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub_pass.pInputAttachments = nullptr;
     sub_pass.inputAttachmentCount = 0;
-    sub_pass.pColorAttachments = color_attachment_refs.data;
-    sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
+    // Leave null while not being used
+    // sub_pass.pColorAttachments = color_attachment_refs.data;
+    // sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
     sub_pass.pDepthStencilAttachment = &depth_attachment_refs;
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
     VkRenderPassCreateInfo pass_args{};
     pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    pass_args.attachmentCount = 1;
+    pass_args.attachmentCount = pass_attachments.size();
     pass_args.pAttachments = pass_attachments.data;
-    pass_args.subpassCount = pass_attachments.size();
+
+    pass_args.subpassCount = 1;
     pass_args.pSubpasses = &sub_pass;
 
     auto pass_ok = vkCreateRenderPass(
@@ -3499,7 +3527,10 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     vulkan_swapchain* swapchain = &g_vulkan->swapchain;
 
     // Set render pass start information
-    VkClearValue clear_value = g_vulkan->config.clear_color;
+    // NOTE: We need 1 clear color for every attachment in the pass, currently 2
+    array<VkClearValue> clear_values {
+        g_vulkan->config.clear_color,  g_vulkan->config.clear_color
+    };
     // VkClearValue clear_values[] = { clear_value, clear_value };
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3507,8 +3538,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     render_pass_args.framebuffer = g_vulkan->swapchain_framebuffers[ frame->inflight_index ];
     render_pass_args.renderArea.offset = {0, 0};
     render_pass_args.renderArea.extent = g_vulkan->swapchain.vk_present_size;
-    render_pass_args.clearValueCount = 1;
-    render_pass_args.pClearValues = &clear_value;
+    render_pass_args.clearValueCount = clear_values.size();
+    render_pass_args.pClearValues = clear_values.data;
     vkCmdBeginRenderPass( frame->command, &render_pass_args, VK_SUBPASS_CONTENTS_INLINE );
 
     bool resize_viewport = true;

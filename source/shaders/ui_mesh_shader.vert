@@ -1,11 +1,12 @@
 #version 430 core
 
 // NOTE: We changed the push constant layout from the old simple mesh shader days to support more
-layout(push_constant) uniform mesh {
+layout(std140, push_constant) uniform mesh {
+    // TODO: Needs to be simplified to mainly just a uniform index
     mat4 local_space;
-    vec2 surface_size;
     vec4 base_color;
     int debug_mode;
+    int uniform_index;
 } push;
 
 layout( location = 0 ) in vec3 normal;
