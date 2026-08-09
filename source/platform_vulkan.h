@@ -413,6 +413,8 @@ struct vulkan_frame
 
     VkCommandBuffer command {};
     VkFence end_fence {};
+    VkSemaphore queue_submit_semaphore {};
+    VkSemaphore frame_end_semaphore {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
     /** All resources */
@@ -481,9 +483,6 @@ struct vulkan_context
     // Ungrouped threading primitives
     VkFence frame_begin_fence;
     VkFence frame_acquire_fence;
-
-    VkSemaphore queue_submit_semaphore;
-    VkSemaphore frame_end_semaphore;
 
     VkAllocationCallbacks allocator_callback {};
     // A pointer to the callback, may be null to turn it off

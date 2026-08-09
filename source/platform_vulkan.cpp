@@ -1923,6 +1923,21 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     if (fence_bad)
     {   VULKAN_ERROR( "Failed to create frame end fence" ); }
 
+    VkSemaphoreCreateInfo semaphore_args {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+    VkResult semaphore_bad_1 = {};
+    VkResult semaphore_bad_2 = {};
+    semaphore_bad_1 = vkCreateSemaphore(
+        g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->frame_end_semaphore );
+    semaphore_bad_2 = vkCreateSemaphore(
+        g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
+    if (semaphore_bad_1 || semaphore_bad_2)
+    {   VULKAN_ERRORF( "Failed to created semaphore {} {}",
+                       string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 ) );
+        return false;
+    }
+
 
     arg->general_uniform_buffer = vulkan_buffer_create(
         "frame_general_uniform",
@@ -2837,20 +2852,8 @@ PROC vulkan_init() -> fresult
     vulkan_label_object(
         (u64)self->frame_acquire_fence, VK_OBJECT_TYPE_FENCE, "frame_acquire_fence" );
 
-    VkSemaphoreCreateInfo semaphore_args {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    };
-    bool semaphore_ok = true;
-    semaphore_ok &= VK_SUCCESS == vkCreateSemaphore(
-        self->logical_device, &semaphore_args, g_vulkan->vk_allocator,
-        &self->frame_end_semaphore );
-    semaphore_ok &= VK_SUCCESS == vkCreateSemaphore(
-        self->logical_device, &semaphore_args, g_vulkan->vk_allocator,
-        &self->queue_submit_semaphore );
-    vulkan_label_object(
-        (u64)self->frame_end_semaphore, VK_OBJECT_TYPE_SEMAPHORE, "frame_end_semaphore" );
-    vulkan_label_object(
-        (u64)self->queue_submit_semaphore, VK_OBJECT_TYPE_SEMAPHORE, "queue_submit_semaphore" );
+    // NOTE: Deleted semaphore creation here, it should be per-frame for
+    // multiple inflight frames synchronization
 
     VkCommandPool& command_pool = g_vulkan->command_pool;
     VkCommandPoolCreateInfo pool_args {};
@@ -3712,7 +3715,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         .commandBufferCount = 1,
         .pCommandBuffers = &frame->command,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &g_vulkan->queue_submit_semaphore,
+        .pSignalSemaphores = &frame->queue_submit_semaphore,
     };
 
     vkCmdEndRenderPass( frame->command );
@@ -3729,7 +3732,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     VkPresentInfoKHR present_args {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &g_vulkan->queue_submit_semaphore,
+        .pWaitSemaphores = &frame->queue_submit_semaphore,
         .swapchainCount = 1,
         .pSwapchains = present_swapchains,
         .pImageIndices = &image_indexes,
