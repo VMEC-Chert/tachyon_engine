@@ -67,6 +67,15 @@ const bool vulkan_config_trace_allocations = false;
 
 using vulkan_bool = u32;
 
+// PROC vulkan_result_stats_increment( vulkan_result_stats* arg, i32 index )
+// {
+//     if (arg.find( index ) != arg.end())
+//     {
+//         return
+//     }
+//     arg.insert( index, 0 );
+// }
+
 PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
 {
     PROFILE_SCOPE_FUNCTION();
@@ -1088,7 +1097,7 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     TracyCZoneEnd( zone_5 );
     ERROR_GUARD( arg->id.valid(), "All entities have an  UUID" );
     ERROR_GUARD( arg->platform_swapchain, "Function ended with null swapchain handle" );
-    return false;
+    return true;
 }
 
 PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
@@ -1928,13 +1937,18 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     };
     VkResult semaphore_bad_1 = {};
     VkResult semaphore_bad_2 = {};
+    VkResult semaphore_bad_3 = {};
     semaphore_bad_1 = vkCreateSemaphore(
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->frame_end_semaphore );
     semaphore_bad_2 = vkCreateSemaphore(
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
-    if (semaphore_bad_1 || semaphore_bad_2)
-    {   VULKAN_ERRORF( "Failed to created semaphore {} {}",
-                       string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 ) );
+    semaphore_bad_3 = vkCreateSemaphore(
+        g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->image_acquire_semaphore );
+    if (semaphore_bad_1 || semaphore_bad_2 || semaphore_bad_3)
+    {   VULKAN_ERRORF(
+            "Failed to created semaphore {} {}",
+            string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 ),
+            string_VkResult( semaphore_bad_3 ));
         return false;
     }
 
@@ -2001,7 +2015,7 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
 PROC vulkan_init_pipelines() -> fresult
 {
     PROFILE_SCOPE_FUNCTION();
-    bool success_flag = false;
+    bool success_flag = true;
     // Create shaders of pipeline
     {
         vulkan_shader vertex_shader {};
@@ -2069,10 +2083,10 @@ PROC vulkan_init_pipelines() -> fresult
         pipeline.shaders.push_tail( fragment_shader );
         vulkan_pipeline_blit_init( &pipeline );
     }
-    if (success_flag)
+    if (success_flag == false)
     {   VULKAN_ERROR( "Failed to create pipeline" );
     }
-    return (! success_flag);
+    return success_flag;
 }
 
 PROC vulkan_transfer_init( vulkan_transfer_context* arg ) -> fresult
@@ -3099,8 +3113,8 @@ PROC vulkan_init() -> fresult
     sub_pass.pInputAttachments = nullptr;
     sub_pass.inputAttachmentCount = 0;
     // Leave null while not being used
-    // sub_pass.pColorAttachments = color_attachment_refs.data;
-    // sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
+    sub_pass.pColorAttachments = color_attachment_refs.data;
+    sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
     sub_pass.pDepthStencilAttachment = &depth_attachment_refs;
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
@@ -3274,18 +3288,25 @@ PROC vulkan_start_frame() -> void
     TracyCZoneN( zone_new_frame, "Vulkan Acquire new Frame", true );
     vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
 
-    // Set draw commands
-    u32 image_index {};
-    u32 inflight_frame_i {};
+    // NOTE: Before we start we need to see if the next image is actually ready to work on
+    // NOTE: vkAcquireNextImageKHR is supposed to increment sequentially.
+
+    // No longer used
+    u32 _image_index {};
+    u32 inflight_frame_i = g_vulkan->render_target->frames_inflight_i;
+    vulkan_frame* frame = g_vulkan->frames_inflight.address( inflight_frame_i );
+    // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
+    VkResult wait_done_bad = vkWaitForFences(
+        g_vulkan->logical_device, 1, &frame->end_fence, true, 500'000'000 );
     auto acquire_bad = vkAcquireNextImageKHR(
         g_vulkan->logical_device,
         g_vulkan->swapchain.platform_swapchain,
         0,
-        VK_NULL_HANDLE,
+        g_vulkan->frames_inflight[ inflight_frame_i ].image_acquire_semaphore,
         g_vulkan->frame_acquire_fence,
-        &image_index
+        &_image_index
     );
-    inflight_frame_i = image_index;
+    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}", inflight_frame_i, _image_index );
 
     if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -3317,7 +3338,7 @@ PROC vulkan_start_frame() -> void
             0,
             VK_NULL_HANDLE,
             g_vulkan->frame_acquire_fence,
-            &image_index
+            &_image_index
         );
     }
     TracyCZoneEnd( zone_new_frame );
@@ -3332,8 +3353,7 @@ PROC vulkan_start_frame() -> void
                        string_VkResult(acquire_bad) );
         return;
     }
-
-    vulkan_frame* frame = g_vulkan->frames_inflight.address( image_index );
+    // NOTE: If we've reached here we must have a valid image to work on.
     VkFence frame_end_fence = frame->end_fence;
 
     // Wait on 'frame_acquire_fence' before proceeding to reset the fence
@@ -3341,7 +3361,7 @@ PROC vulkan_start_frame() -> void
         g_vulkan->logical_device, 1, &frame_end_fence, true, 1'0000'000'000 );
     vkResetFences( self->logical_device, 1, &frame_end_fence );
     if (end_timeout == VK_TIMEOUT)
-    {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", image_index ); return; }
+    {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", inflight_frame_i ); return; }
 
     /* Wait for frame acquire before proceeding to resetting command buffer This
        sort of halts when the next frame is not completed or blocked so no more
@@ -3523,6 +3543,16 @@ PROC vulkan_start_frame() -> void
 
     TracyCZoneEnd( zone_setup_frame );
     vulkan_command_draw( frame );
+
+    /* NOTE: It is important the inflight frame index is incremented and wrapped
+       around every time a frame is finished.
+       WARNING: DO NOT try to return early from this function if an image is acquire */
+    g_vulkan->render_target->frames_inflight_i++;
+    bool index_past_last_frame = (
+        g_vulkan->render_target->frames_inflight_i >= g_vulkan->render_target->frames_inflight);
+    if (index_past_last_frame)
+    {   g_vulkan->render_target->frames_inflight_i = 0;
+    }
 }
 
 PROC vulkan_command_draw( vulkan_frame* frame ) -> void
@@ -3532,7 +3562,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     // Set render pass start information
     // NOTE: We need 1 clear color for every attachment in the pass, currently 2
     array<VkClearValue> clear_values {
-        g_vulkan->config.clear_color,  g_vulkan->config.clear_color
+        g_vulkan->config.clear_color,
+        g_vulkan->config.clear_depth
     };
     // VkClearValue clear_values[] = { clear_value, clear_value };
     VkRenderPassBeginInfo render_pass_args{};
@@ -3707,9 +3738,9 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     // Finalize frame and submit all commands
     VkSubmitInfo submit_args {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        // No semaphores to wait on yet
-        .waitSemaphoreCount = 0,
-        .pWaitSemaphores = nullptr,
+        // NOTE: We need to wait for an image to be available on the GPU side before submitting
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &frame->image_acquire_semaphore,
         .pWaitDstStageMask = wait_stages,
         // Just the one command buffer for now
         .commandBufferCount = 1,
@@ -3725,7 +3756,9 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     // { TYON_ERROR( "Failed to wait on frame start fence for some reason" ); }
     // TODO: This doesn't wait for memory transfers to finish, this is actually kind of an issue
     // Need to wait on the frame end fence
-    vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame->end_fence );
+    VkResult submit_bad = vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame->end_fence );
+    VULKAN_LOGF( "Submitted frame, return result {}", string_VkResult( submit_bad ) );
+    g_vulkan->stats.queue_submit[ submit_bad ] += 1;
 
     VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };
     u32 image_indexes = frame->inflight_index;

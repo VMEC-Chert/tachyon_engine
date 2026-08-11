@@ -413,7 +413,10 @@ struct vulkan_frame
 
     VkCommandBuffer command {};
     VkFence end_fence {};
+    /** Signalled around the start of a frame*/
+    VkSemaphore image_acquire_semaphore {};
     VkSemaphore queue_submit_semaphore {};
+    /** Signalled around the end of a frame*/
     VkSemaphore frame_end_semaphore {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
@@ -431,6 +434,7 @@ struct vulkan_render_target
     fstring name;
     // TODO: Change these to entity references
     // array<vulkan_frame*> frames;
+    /** Max number of inflight frames */
     i32 frames_inflight = 3;
     /** Index of current frame being worked on for this render target */
     i32 frames_inflight_i = 0;
@@ -445,6 +449,15 @@ struct vulkan_config
 
     VkClearValue clear_purple {{ 0.2f, 0.0f, 0.2f, 1.0f }};
     VkClearValue clear_black {{ 0.0f, 0.0f, 0.0f, 0.0f }};
+    // NOTE: 1.0 is the correct stand far clip plane for depth buffers
+    VkClearValue clear_depth { .depthStencil { 1.0f, 0} };
+};
+
+using vulkan_result_stats = std::unordered_map<VkResult, i32>;
+
+struct vulkan_stats
+{
+    vulkan_result_stats queue_submit;
 };
 
 struct vulkan_context
@@ -590,6 +603,8 @@ struct vulkan_context
     };
     // SECTION: Configurables
     vulkan_config config;
+
+    vulkan_stats stats;
 };
 
 PROC vulkan_allocator_create_callbacks( i_allocator* allocator );
