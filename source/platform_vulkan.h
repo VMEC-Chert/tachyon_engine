@@ -398,8 +398,11 @@ struct vulkan_frame
 {
     // The index of the frame drawn since program start
     i64 draw_index = -1;
-    /** Provided by vkAcquireNextImageKHR */
+    /** Current self index of the frame ring we are drawing on, ie 0-2 indexes */
     i32 inflight_index = -1;
+    /** Provided by vkAcquireNextImageKHR
+        NOTE: apparently this is different to my own internal counter and provided out of order */
+    i32 acquired_image_i {};
     frame_general_uniform uniform;
     vulkan_buffer general_uniform_buffer;
 
@@ -445,6 +448,9 @@ struct vulkan_render_target
 
 struct vulkan_config
 {
+    /** Break on validation message */
+    bool break_on_validation = false;
+
     VkClearValue clear_color {{ 0.0f, 0.0f, 0.0f, 0.0f }};
 
     VkClearValue clear_purple {{ 0.2f, 0.0f, 0.2f, 1.0f }};
@@ -607,7 +613,9 @@ struct vulkan_context
     vulkan_stats stats;
 };
 
-PROC vulkan_allocator_create_callbacks( i_allocator* allocator );
+PROC vulkan_fence_wait_reset( VkFence arg, VkResult fence_result ) -> void;
+
+PROC vulkan_allocator_create_callbacks( i_allocator* allocator ) -> VkAllocationCallbacks;
 
 /** Applies a debug label to an object.
 

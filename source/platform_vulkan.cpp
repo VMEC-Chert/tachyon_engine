@@ -22,11 +22,13 @@ auto  VKAPI_CALL vulkan_debug_callback(
     PROFILE_SCOPE_FUNCTION();
     using namespace tyon;
     fstring type_name;
+    bool validation_message = false;
     switch (message_type) {
         case VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT:
             type_name = "General"; break;
         case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT:
-            type_name = "Validation"; break;
+            type_name = "Validation";
+            validation_message = true; break;
         case VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT:
             type_name = "Performance"; break;
         case VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT:
@@ -35,6 +37,7 @@ auto  VKAPI_CALL vulkan_debug_callback(
             type_name = "unknown_message_type";
     }
 
+    bool debug_break = (global->debugger_mode || g_vulkan->config.break_on_validation);
     fstring _category = fmt::format( "Vulkan {}", type_name );
     cstring category = _category.c_str();
     switch (message_severity)
@@ -50,13 +53,11 @@ auto  VKAPI_CALL vulkan_debug_callback(
             break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
             TYON_BASE_ERRORF( category, "[Error] {}", callback_data->pMessage );
-            if (global->debugger_mode)
-            {   TYON_BREAK();
-            }
             break;
         default:
             TYON_BASE_LOGF( "Vulkan unknown_debug_category", "{}", callback_data->pMessage );
     }
+    if (debug_break) { TYON_BREAK(); }
     return VK_FALSE;
 }
 
@@ -76,7 +77,15 @@ using vulkan_bool = u32;
 //     arg.insert( index, 0 );
 // }
 
-PROC vulkan_allocator_create_callbacks( i_allocator* allocator )
+// TODO: Need internal vulkan_fence version
+PROC vulkan_fence_wait_reset( VkFence arg, VkResult fence_result ) -> void
+{
+    if (fence_result == VK_SUCCESS)
+    {   vkResetFences( g_vulkan->logical_device, 1, &arg );
+    }
+}
+
+PROC vulkan_allocator_create_callbacks( i_allocator* allocator ) -> VkAllocationCallbacks
 {
     PROFILE_SCOPE_FUNCTION();
     VkAllocationCallbacks result = {};
@@ -3286,13 +3295,13 @@ PROC vulkan_start_frame() -> void
     // -- Pre-Draw Start Setup and Reset Tasks
     // Clear acquire fence if we skipped the last frame
     TracyCZoneN( zone_new_frame, "Vulkan Acquire new Frame", true );
+    // TODO: Suspicious reset
     vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
 
     // NOTE: Before we start we need to see if the next image is actually ready to work on
     // NOTE: vkAcquireNextImageKHR is supposed to increment sequentially.
 
-    // No longer used
-    u32 _image_index {};
+    u32 acquired_image_i = {};
     u32 inflight_frame_i = g_vulkan->render_target->frames_inflight_i;
     vulkan_frame* frame = g_vulkan->frames_inflight.address( inflight_frame_i );
     // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
@@ -3304,9 +3313,14 @@ PROC vulkan_start_frame() -> void
         0,
         g_vulkan->frames_inflight[ inflight_frame_i ].image_acquire_semaphore,
         g_vulkan->frame_acquire_fence,
-        &_image_index
+        &acquired_image_i
     );
-    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}", inflight_frame_i, _image_index );
+    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}", 
+                 inflight_frame_i, frame->acquired_image_i );
+    // if (_image_index != inflight_frame_i)
+    // {   VULKAN_ERROR( "Image index does not match frame index, skipping work" );
+    //     return;
+    // }
 
     if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -3338,7 +3352,7 @@ PROC vulkan_start_frame() -> void
             0,
             VK_NULL_HANDLE,
             g_vulkan->frame_acquire_fence,
-            &_image_index
+            &acquired_image_i
         );
     }
     TracyCZoneEnd( zone_new_frame );
@@ -3355,13 +3369,15 @@ PROC vulkan_start_frame() -> void
     }
     // NOTE: If we've reached here we must have a valid image to work on.
     VkFence frame_end_fence = frame->end_fence;
+    // Save acquired image index
+    frame->acquired_image_i = acquired_image_i;
 
     // Wait on 'frame_acquire_fence' before proceeding to reset the fence
     auto end_timeout = vkWaitForFences(
         g_vulkan->logical_device, 1, &frame_end_fence, true, 1'0000'000'000 );
-    vkResetFences( self->logical_device, 1, &frame_end_fence );
     if (end_timeout == VK_TIMEOUT)
     {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", inflight_frame_i ); return; }
+    vulkan_fence_wait_reset( frame_end_fence, end_timeout );
 
     /* Wait for frame acquire before proceeding to resetting command buffer This
        sort of halts when the next frame is not completed or blocked so no more
@@ -3733,7 +3749,9 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         }
     }
 
-    VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    // TODO: I don't know what stages to wait on here, I'm just following guides/AI
+    VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT };
 
     // Finalize frame and submit all commands
     VkSubmitInfo submit_args {
@@ -3761,7 +3779,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     g_vulkan->stats.queue_submit[ submit_bad ] += 1;
 
     VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };
-    u32 image_indexes = frame->inflight_index;
+    u32 image_indexes = frame->acquired_image_i;
     VkPresentInfoKHR present_args {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
