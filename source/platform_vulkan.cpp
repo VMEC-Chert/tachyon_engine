@@ -1818,6 +1818,34 @@ PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
     return result;
 }
 
+PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
+{
+    i32 i_limit_frames = arg->frames_inflight;
+    // Allocate and size arrays
+    arg->image_acquire_semaphores.resize( i_limit_frames );
+    arg->depth_images.resize( i_limit_frames );
+    arg->depth_image_views.resize( i_limit_frames );
+
+    VkResult semaphore_bad = VK_SUCCESS;
+    bool semaphore_all_bad = false;
+    for (i32 i=0; i < i_limit_frames; ++i)
+    {
+        VkSemaphoreCreateInfo semaphore_args {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        semaphore_bad = vkCreateSemaphore(
+            g_vulkan->logical_device, &semaphore_args,
+            g_vulkan->vk_allocator, &arg->image_acquire_semaphores[i]
+        );
+        semaphore_all_bad |= semaphore_bad;
+    }
+    if (semaphore_bad)
+    {   VULKAN_ERROR( "Failed to create semaphore" );
+        return false;
+    }
+    return true;
+}
+
 /** Allocates and initializes an depth buffer/image entity */
 PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
 {
@@ -1946,18 +1974,15 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     };
     VkResult semaphore_bad_1 = {};
     VkResult semaphore_bad_2 = {};
-    VkResult semaphore_bad_3 = {};
-    semaphore_bad_1 = vkCreateSemaphore(
+        semaphore_bad_1 = vkCreateSemaphore(
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->frame_end_semaphore );
     semaphore_bad_2 = vkCreateSemaphore(
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
-    semaphore_bad_3 = vkCreateSemaphore(
-        g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->image_acquire_semaphore );
-    if (semaphore_bad_1 || semaphore_bad_2 || semaphore_bad_3)
+    if (semaphore_bad_1 || semaphore_bad_2)
     {   VULKAN_ERRORF(
             "Failed to created semaphore {} {}",
-            string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 ),
-            string_VkResult( semaphore_bad_3 ));
+            string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 )
+        );
         return false;
     }
 
@@ -3015,6 +3040,8 @@ PROC vulkan_init() -> fresult
        framebuffer, each pipeline could have its own or use a shared
        framebuffer. */
 
+    vulkan_render_target_init( g_vulkan->render_target );
+
     // PURPOSE: Create a depth buffer for attachment for each swapchain image
     // NOTE: Need to create depth buffer before referencing data in attachments and refs
     // NOTE: Just accept it as nullptr if depth buffer it wasn't created successfully
@@ -3311,7 +3338,7 @@ PROC vulkan_start_frame() -> void
         g_vulkan->logical_device,
         g_vulkan->swapchain.platform_swapchain,
         0,
-        g_vulkan->frames_inflight[ inflight_frame_i ].image_acquire_semaphore,
+        g_vulkan->render_target->image_acquire_semaphores[ acquired_image_i ],
         g_vulkan->frame_acquire_fence,
         &acquired_image_i
     );
@@ -3758,7 +3785,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         // NOTE: We need to wait for an image to be available on the GPU side before submitting
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame->image_acquire_semaphore,
+        .pWaitSemaphores = &g_vulkan->render_target->image_acquire_semaphores[ frame->acquired_image_i ],
         .pWaitDstStageMask = wait_stages,
         // Just the one command buffer for now
         .commandBufferCount = 1,

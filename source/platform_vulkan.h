@@ -416,8 +416,6 @@ struct vulkan_frame
 
     VkCommandBuffer command {};
     VkFence end_fence {};
-    /** Signalled around the start of a frame*/
-    VkSemaphore image_acquire_semaphore {};
     VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
     VkSemaphore frame_end_semaphore {};
@@ -444,6 +442,11 @@ struct vulkan_render_target
     vulkan_swapchain* swapchain;
     array<vulkan_image*> depth_images;
     array<VkImageView> depth_image_views;
+    /** NOTE: The image acquired is not related to the current frame we're
+     * working on and this can cause overlapping semaphore usage if this is not
+     * taken into account, because of this it cannot be put in vulkan_frame
+     * because that is invalid. */
+    array<VkSemaphore> image_acquire_semaphores;
 };
 
 struct vulkan_config
