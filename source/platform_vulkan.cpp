@@ -132,7 +132,7 @@ PROC vulkan_allocator_create_callbacks( i_allocator* allocator ) -> VkAllocation
         {   if (bytes == 0) {   impl->deallocate( original ); }
             else { result_ = impl->allocate_relocate( original, bytes ); }
         }
-        else { result_ = impl->allocate_raw( bytes, bytes ); }
+        else { result_ = impl->allocate_raw( bytes, alignment ); }
 
         if constexpr (vulkan_config_trace_allocations)
         {
@@ -1822,7 +1822,7 @@ PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
 {
     i32 i_limit_frames = arg->frames_inflight;
     // Allocate and size arrays
-    arg->image_acquire_semaphores.resize( i_limit_frames );
+    // arg->queue_submit_semaphores.resize( i_limit_frames );
     arg->depth_images.resize( i_limit_frames );
     arg->depth_image_views.resize( i_limit_frames );
 
@@ -1832,10 +1832,11 @@ PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
     {
         VkSemaphoreCreateInfo semaphore_args {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = nullptr
         };
         semaphore_bad = vkCreateSemaphore(
             g_vulkan->logical_device, &semaphore_args,
-            g_vulkan->vk_allocator, &arg->image_acquire_semaphores[i]
+            g_vulkan->vk_allocator, &arg->queue_submit_semaphores[i]
         );
         semaphore_all_bad |= semaphore_bad;
     }
@@ -1875,7 +1876,8 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         // NOTE: You can use zero initialized or pre-initialized instead
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-     bool extent_zero = (image_args.extent.width == image_args.extent.height);
+     bool extent_zero = ((image_args.extent.width == 0) &&
+                         (image_args.extent.height == 0));
      if (extent_zero)
      {  VULKAN_LOGF( "image extent x and y are the same [{} {}], Vulkan on nVIDIA doesn't like this",
          image_args.extent.width, image_args.extent.height  );
@@ -1974,14 +1976,20 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     };
     VkResult semaphore_bad_1 = {};
     VkResult semaphore_bad_2 = {};
-        semaphore_bad_1 = vkCreateSemaphore(
+    VkResult semaphore_bad_3 = {};
+    semaphore_bad_1 = vkCreateSemaphore(
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->frame_end_semaphore );
-    semaphore_bad_2 = vkCreateSemaphore(
-        g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
-    if (semaphore_bad_1 || semaphore_bad_2)
+    // semaphore_bad_2 = vkCreateSemaphore(
+        // g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
+    semaphore_bad_3 = vkCreateSemaphore(
+        g_vulkan->logical_device, &semaphore_args,
+        g_vulkan->vk_allocator, &arg->image_acquire_semaphore
+    );
+    if (semaphore_bad_1 || semaphore_bad_2 || semaphore_bad_3)
     {   VULKAN_ERRORF(
             "Failed to created semaphore {} {}",
-            string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 )
+            string_VkResult( semaphore_bad_1 ), string_VkResult( semaphore_bad_2 ),
+            string_VkResult( semaphore_bad_3 )
         );
         return false;
     }
@@ -2009,7 +2017,7 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
     );
     vulkan_memory_allocate_buffer( &g_vulkan->device_memory, &arg->blit_uniforms_buffer );
 
-    i32 ui_mesh_uniforms = g_vulkan->ui_blit_pipeline.uniform_count;
+    i32 ui_mesh_uniforms = g_vulkan->ui_mesh_pipeline.uniform_count;
     arg->ui_mesh_uniforms.resize( ui_mesh_uniforms );
     arg->ui_mesh_uniforms_buffer = vulkan_buffer_create(
         "ui_blit_uniform",
@@ -2853,6 +2861,8 @@ PROC vulkan_init() -> fresult
         VK_KHR_SWAPCHAIN_EXTENSION_NAME, // Presentation swapchain extension
         // Interferes with debugging
         // VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, // Multiple pixels per fragment
+        // Allows empty shader inputs/outputs
+         VK_EXT_VERTEX_ATTRIBUTE_ROBUSTNESS_EXTENSION_NAME
     };
     device_args.ppEnabledLayerNames = enabled_layers.data;
     device_args.enabledLayerCount = clamp_u32( enabled_layers.size() );
@@ -3334,11 +3344,17 @@ PROC vulkan_start_frame() -> void
     // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
     VkResult wait_done_bad = vkWaitForFences(
         g_vulkan->logical_device, 1, &frame->end_fence, true, 500'000'000 );
+
+    // NOTE: Allow the renderer to recycle through render loop and do other work if there is a timeout
+    if (wait_done_bad)
+    {   VULKAN_LOG( "frame end fence timeout " );
+        return;
+    }
     auto acquire_bad = vkAcquireNextImageKHR(
         g_vulkan->logical_device,
         g_vulkan->swapchain.platform_swapchain,
         0,
-        g_vulkan->render_target->image_acquire_semaphores[ acquired_image_i ],
+        frame->image_acquire_semaphore,
         g_vulkan->frame_acquire_fence,
         &acquired_image_i
     );
@@ -3373,14 +3389,15 @@ PROC vulkan_start_frame() -> void
         g_vulkan->swapchain.vk_present_size = as<VkExtent2D>( g_render->ui_camera.sensor_size );
         vulkan_swapchain_init( &g_vulkan->swapchain, reuse_swapchain );
 
-        acquire_bad = vkAcquireNextImageKHR(
-            g_vulkan->logical_device,
-            g_vulkan->swapchain.platform_swapchain,
-            0,
-            VK_NULL_HANDLE,
-            g_vulkan->frame_acquire_fence,
-            &acquired_image_i
-        );
+        // TODO: I think doing this again without running back to the top is a code smell
+        // acquire_bad = vkAcquireNextImageKHR(
+        //     g_vulkan->logical_device,
+        //     g_vulkan->swapchain.platform_swapchain,
+        //     0,
+        //     VK_NULL_HANDLE,
+        //     g_vulkan->frame_acquire_fence,
+        //     &acquired_image_i
+        // );
     }
     TracyCZoneEnd( zone_new_frame );
 
@@ -3612,7 +3629,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_args.renderPass = g_vulkan->render_pass;
-    render_pass_args.framebuffer = g_vulkan->swapchain_framebuffers[ frame->inflight_index ];
+    render_pass_args.framebuffer = g_vulkan->swapchain_framebuffers[ frame->acquired_image_i ];
     render_pass_args.renderArea.offset = {0, 0};
     render_pass_args.renderArea.extent = g_vulkan->swapchain.vk_present_size;
     render_pass_args.clearValueCount = clear_values.size();
@@ -3662,6 +3679,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
             case e_vulkan_draw::any: VULKAN_ERROR( "Passed draw command with 'any' type" ); break;
             case e_vulkan_draw::mesh:
             {
+                break;
                 /* SECTION: Select mesh for drawing
 
                    NOTE: This section used to read from the original render mesh
@@ -3785,13 +3803,13 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         // NOTE: We need to wait for an image to be available on the GPU side before submitting
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &g_vulkan->render_target->image_acquire_semaphores[ frame->acquired_image_i ],
+        .pWaitSemaphores = &frame->image_acquire_semaphore,
         .pWaitDstStageMask = wait_stages,
         // Just the one command buffer for now
         .commandBufferCount = 1,
         .pCommandBuffers = &frame->command,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &frame->queue_submit_semaphore,
+        .pSignalSemaphores = &g_vulkan->render_target->queue_submit_semaphores[ frame->acquired_image_i ]
     };
 
     vkCmdEndRenderPass( frame->command );
@@ -3810,7 +3828,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     VkPresentInfoKHR present_args {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame->queue_submit_semaphore,
+        .pWaitSemaphores = &g_vulkan->render_target->queue_submit_semaphores[ frame->acquired_image_i ],
         .swapchainCount = 1,
         .pSwapchains = present_swapchains,
         .pImageIndices = &image_indexes,

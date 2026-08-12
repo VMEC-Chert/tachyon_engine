@@ -416,9 +416,10 @@ struct vulkan_frame
 
     VkCommandBuffer command {};
     VkFence end_fence {};
-    VkSemaphore queue_submit_semaphore {};
+    // VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
     VkSemaphore frame_end_semaphore {};
+    VkSemaphore image_acquire_semaphore {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
     /** All resources */
@@ -427,6 +428,11 @@ struct vulkan_frame
     array< render_image*> draw_queue_image;
     array< vulkan_draw_command > draw_queue_command;
 
+};
+
+/** Contrived abstraction to match per-swapchain data based on Vulkan provided layout */
+struct vulkan_swapchain_image
+{
 };
 
 struct vulkan_render_target
@@ -445,8 +451,8 @@ struct vulkan_render_target
     /** NOTE: The image acquired is not related to the current frame we're
      * working on and this can cause overlapping semaphore usage if this is not
      * taken into account, because of this it cannot be put in vulkan_frame
-     * because that is invalid. */
-    array<VkSemaphore> image_acquire_semaphores;
+     * because that is invalid. Note this is specific to queue submission */
+    array<VkSemaphore> queue_submit_semaphores;
 };
 
 struct vulkan_config
