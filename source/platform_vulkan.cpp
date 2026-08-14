@@ -1031,6 +1031,9 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     vkGetSwapchainImagesKHR( g_vulkan->logical_device, arg->platform_swapchain,
                              &n_swapchain_images_, nullptr );
     n_swapchain_images = clamp_i32( n_swapchain_images_ );
+    if (n_swapchain_images != g_vulkan->frames_inflight_count)
+    {   TYON_BREAK();
+    }
 
     swapchain_images.resize( n_swapchain_images );
     vkGetSwapchainImagesKHR( g_vulkan->logical_device, arg->platform_swapchain,
@@ -1748,6 +1751,12 @@ PROC vulkan_mesh_init( mesh* arg ) -> fresult
 
 PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
 {
+    monad<vulkan_image*> result;
+    if (arg->image.zero_size())
+    {   VULKAN_ERRORF( "Tried to initize Vulkan image with zero size, this is not valid [{} {}]",
+                       arg->image.size.x, arg->image.size.y );
+        return { nullptr, true };
+    }
     VkImageCreateInfo image_args {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -1814,7 +1823,7 @@ PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
 
     image->id = uuid_generate();
     VULKAN_LOGF( "Intialized render image '{}' with id {}", arg->name, arg->id );
-    monad<vulkan_image*> result { image, suballocate_ok };
+    result = { image, suballocate_ok };
     return result;
 }
 
@@ -1876,7 +1885,7 @@ PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
         // NOTE: You can use zero initialized or pre-initialized instead
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
-     bool extent_zero = ((image_args.extent.width == 0) &&
+     bool extent_zero = ((image_args.extent.width == 0) ||
                          (image_args.extent.height == 0));
      if (extent_zero)
      {  VULKAN_LOGF( "image extent x and y are the same [{} {}], Vulkan on nVIDIA doesn't like this",
@@ -2707,6 +2716,11 @@ PROC vulkan_init() -> fresult
             dedicated_graphics = true;
             VULKAN_LOG( "    Device Type: Discrete GPU");
         }
+        /* TODO: Query VK_EXT_pci_bus_info, VK_NV_shader_sm_builtins and VK_AMD_shader_core_properties
+         to get compute tile capabilities so we can compare characteristics within a vendor*/
+        // List compute characteristics as well
+        VULKAN_LOGF( "    maxComputeWorkGroupInvocations: {}",
+                     props.limits.maxComputeWorkGroupInvocations );
 
             // Enumerate Device Extensions
         // TODO: Search through instance layers
@@ -2785,6 +2799,11 @@ PROC vulkan_init() -> fresult
         // Use llvmpipe exclusively if selected, otherwise prefer dedicated
         // graphics, otherwise use anything
         fstring device_name = props.deviceName;
+
+        // HACK: TODO: Skipping tihs exact GPU temporarily because its causing issues in testing
+        // TODO: Add manual device override in future
+        if (device_name == "NVIDIA GeForce RTX 3060")
+        {   continue; }
         // std::for_each( device_name.begin(), device_name.end(), [](char x) { return std::tolower(x); } );
         std::ranges::for_each( device_name, [](char x) { return std::tolower(x); } );
         bool detected_llvmpipe = (device_name.find( "llvmpipe") != std::string::npos);
@@ -3332,8 +3351,6 @@ PROC vulkan_start_frame() -> void
     // -- Pre-Draw Start Setup and Reset Tasks
     // Clear acquire fence if we skipped the last frame
     TracyCZoneN( zone_new_frame, "Vulkan Acquire new Frame", true );
-    // TODO: Suspicious reset
-    vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
 
     // NOTE: Before we start we need to see if the next image is actually ready to work on
     // NOTE: vkAcquireNextImageKHR is supposed to increment sequentially.
@@ -3342,14 +3359,19 @@ PROC vulkan_start_frame() -> void
     u32 inflight_frame_i = g_vulkan->render_target->frames_inflight_i;
     vulkan_frame* frame = g_vulkan->frames_inflight.address( inflight_frame_i );
     // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
-    VkResult wait_done_bad = vkWaitForFences(
-        g_vulkan->logical_device, 1, &frame->end_fence, true, 500'000'000 );
 
+    // Wait on 'frame_acquire_fence' before proceeding to reset the fence
     // NOTE: Allow the renderer to recycle through render loop and do other work if there is a timeout
-    if (wait_done_bad)
-    {   VULKAN_LOG( "frame end fence timeout " );
+    auto frame_end_timeout = vkWaitForFences(
+        g_vulkan->logical_device, 1, &frame->end_fence, true, 16'000'000 );
+    if (frame_end_timeout == VK_TIMEOUT)
+    {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", inflight_frame_i );
         return;
     }
+
+    // NOTE: We passed the fence successfully, we can reset the fence and continue
+    vulkan_fence_wait_reset( frame->end_fence, frame_end_timeout );
+
     auto acquire_bad = vkAcquireNextImageKHR(
         g_vulkan->logical_device,
         g_vulkan->swapchain.platform_swapchain,
@@ -3358,21 +3380,12 @@ PROC vulkan_start_frame() -> void
         g_vulkan->frame_acquire_fence,
         &acquired_image_i
     );
-    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}", 
-                 inflight_frame_i, frame->acquired_image_i );
-    // if (_image_index != inflight_frame_i)
-    // {   VULKAN_ERROR( "Image index does not match frame index, skipping work" );
-    //     return;
-    // }
 
     if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
     {
         // static time_periodic resize_delay( 16ms );
         // if (resize_delay.triggered() == false)
         // { return; }
-
-        // Reset fence before using again VUID-vkResetFences-pFences-01123
-        vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
 
         /* if This code is reached there's a pretty good chance the widow was
            resized or tampered with and it invalidated the swapchain.
@@ -3398,6 +3411,10 @@ PROC vulkan_start_frame() -> void
         //     g_vulkan->frame_acquire_fence,
         //     &acquired_image_i
         // );
+
+        // TODO: This might skip a whole frame, if this happens we should probably
+        // consider restarting the frame before the main tachyon render loop waits 1 frame
+        return;
     }
     TracyCZoneEnd( zone_new_frame );
 
@@ -3412,22 +3429,20 @@ PROC vulkan_start_frame() -> void
         return;
     }
     // NOTE: If we've reached here we must have a valid image to work on.
-    VkFence frame_end_fence = frame->end_fence;
     // Save acquired image index
     frame->acquired_image_i = acquired_image_i;
 
-    // Wait on 'frame_acquire_fence' before proceeding to reset the fence
-    auto end_timeout = vkWaitForFences(
-        g_vulkan->logical_device, 1, &frame_end_fence, true, 1'0000'000'000 );
-    if (end_timeout == VK_TIMEOUT)
-    {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", inflight_frame_i ); return; }
-    vulkan_fence_wait_reset( frame_end_fence, end_timeout );
+    // NOTE: Overly verbose logging, was only meant for targeted debugging
+    // VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}",
+    // inflight_frame_i, frame->acquired_image_i );
+
 
     /* Wait for frame acquire before proceeding to resetting command buffer This
        sort of halts when the next frame is not completed or blocked so no more
        work can be done */
     auto frame_timeout = vkWaitForFences(
         g_vulkan->logical_device, 1, &self->frame_acquire_fence, true, 16'666'666 );
+
     if (frame_timeout == VK_TIMEOUT)
     {   VULKAN_ERRORF( "Frame: {}] | Missed frame!", current_frame_i );
         return;
@@ -3438,13 +3453,16 @@ PROC vulkan_start_frame() -> void
         g_vulkan->device_lost = true;
         return;
     }
-    else if (frame_timeout == VK_SUCCESS)
-    {
-        // VULKAN_LOGF( "Frame: {} | Completed Frame.", current_frame_i );
-        if (g_render->display_ready == false) { g_render->display_ready = true; }
-        g_vulkan->frames_completed++;
-        FrameMarkEnd( "Vulkan Inflight Frame" );
+    else if (frame_timeout)
+    {   // TODO: Undocumented and unconsidered error cases
+        return;
     }
+    // VULKAN_LOGF( "Frame: {} | Completed Frame.", current_frame_i );
+    if (g_render->display_ready == false) { g_render->display_ready = true; }
+    g_vulkan->frames_completed++;
+    FrameMarkEnd( "Vulkan Inflight Frame" );
+    // NOTE: If we passed the frame_acquire_fence timeout early return we can reset safely
+    vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
     FrameMarkStart( "Vulkan Inflight Frame" );
 
     // -- Get started on new frame --
@@ -3679,7 +3697,6 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
             case e_vulkan_draw::any: VULKAN_ERROR( "Passed draw command with 'any' type" ); break;
             case e_vulkan_draw::mesh:
             {
-                break;
                 /* SECTION: Select mesh for drawing
 
                    NOTE: This section used to read from the original render mesh
@@ -3820,7 +3837,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     // TODO: This doesn't wait for memory transfers to finish, this is actually kind of an issue
     // Need to wait on the frame end fence
     VkResult submit_bad = vkQueueSubmit( g_vulkan->graphics_queue, 1, &submit_args, frame->end_fence );
-    VULKAN_LOGF( "Submitted frame, return result {}", string_VkResult( submit_bad ) );
+    // VULKAN_LOGF( "Submitted frame, return result {}", string_VkResult( submit_bad ) );
     g_vulkan->stats.queue_submit[ submit_bad ] += 1;
 
     VkSwapchainKHR present_swapchains[] = { g_vulkan->swapchain.platform_swapchain };
