@@ -93,6 +93,9 @@ struct vulkan_swapchain
     i32 n_images = 0;
     bool initialized = false;
     resource_arena resources;
+
+    array<VkSemaphore> image_acquire_semaphores {};
+    array<VkFence> end_fences {};
 };
 
 struct vulkan_pipeline
@@ -421,7 +424,6 @@ struct vulkan_frame
     // VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
     VkSemaphore frame_end_semaphore {};
-    VkSemaphore image_acquire_semaphore {};
     // NOTE: Need staging buffer for most objects, revisit this later if it's faster
     // raw_pointer general_uniform_data;
     /** All resources */
@@ -430,11 +432,6 @@ struct vulkan_frame
     array< render_image*> draw_queue_image;
     array< vulkan_draw_command > draw_queue_command;
 
-};
-
-/** Contrived abstraction to match per-swapchain data based on Vulkan provided layout */
-struct vulkan_swapchain_image
-{
 };
 
 struct vulkan_render_target

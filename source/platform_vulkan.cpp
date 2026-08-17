@@ -939,6 +939,36 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     VkAllocationCallbacks allocator = vulkan_allocator_create_callbacks(
         g_vulkan->allocator );
 
+    arg->image_acquire_semaphores.resize( 3 );
+    VkSemaphoreCreateInfo semaphore_args {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = nullptr
+    };
+    i32 i_limit = g_vulkan->render_target->frames_inflight;
+    arg->end_fences.resize( i_limit );
+    for (i32 i = 0; i < i_limit; ++i)
+    {
+        VkResult acquire_sempahore_bad = vkCreateSemaphore(
+            g_vulkan->logical_device, &semaphore_args,
+            g_vulkan->vk_allocator, &arg->image_acquire_semaphores[i]
+        );
+        if (acquire_sempahore_bad)
+        {   return false;
+        }
+
+        VkFenceCreateInfo fence_args {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            // Start signalled
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        VkResult fence_bad = vkCreateFence(
+            g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &arg->end_fences[i] );
+        vulkan_label_object( (u64)arg->end_fences[i], VK_OBJECT_TYPE_FENCE, "frame_end_fence"  );
+        if (fence_bad)
+        {   return false;
+        }
+    }
+
     if  (g_vulkan->surface)
     {
         /* We need to know the capabilities of the surface associated with the physical device
@@ -951,10 +981,10 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
         VkExtent2D max = surface_capabilities.maxImageExtent;
         VkExtent2D current = surface_capabilities.currentExtent;
 
-        VULKAN_LOGF(
-            "Present surface/image extent min: {} {} max: {} {} current {} {}",
-            min.width, min.height, max.width, max.height, current.width, current.height
-        );
+        // VULKAN_LOGF(
+        //     "Present surface/image extent min: {} {} max: {} {} current {} {}",
+        //     min.width, min.height, max.width, max.height, current.width, current.height
+        // );
 
         if (current.width == u32(-1) || current.height == u32(-1) )
         {   VULKAN_LOG( "Found weird current surface size, we will try to request an appropriate size" );
@@ -1179,8 +1209,18 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
         arg->platform_swapchain,
         g_vulkan->vk_allocator
     );
+
+    // Delete all semaphores
+    i32 i_limit = g_vulkan->render_target->frames_inflight;
+    for (i32 i = 0; i < i_limit; ++i)
+    {
+        vkDestroySemaphore(
+            g_vulkan->logical_device, arg->image_acquire_semaphores[i], g_vulkan->vk_allocator );
+    }
+    VULKAN_LOG( "Destroyed swapchain {} {}", arg->name, arg->name );
     // Nullify it so we don't double delte
     *arg = vulkan_swapchain {};
+
 }
 
 PROC vulkan_buffer_create(
@@ -2034,10 +2074,6 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
         g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->frame_end_semaphore );
     // semaphore_bad_2 = vkCreateSemaphore(
         // g_vulkan->logical_device, &semaphore_args, g_vulkan->vk_allocator, &arg->queue_submit_semaphore );
-    semaphore_bad_3 = vkCreateSemaphore(
-        g_vulkan->logical_device, &semaphore_args,
-        g_vulkan->vk_allocator, &arg->image_acquire_semaphore
-    );
     if (semaphore_bad_1 || semaphore_bad_2 || semaphore_bad_3)
     {   VULKAN_ERRORF(
             "Failed to created semaphore {} {}",
@@ -2521,6 +2557,27 @@ PROC vulkan_mesh_prepare( mesh* draw_mesh, vulkan_frame* frame ) -> fresult
         vkUpdateDescriptorSets (g_vulkan->logical_device, 1, &resource_write_args, 0, nullptr );
         vk_draw_mesh->resource_update_timestamp = time_now_ns();
     }
+    return true;
+}
+
+PROC vulkan_swapchain_invalid_reset( vulkan_swapchain* arg, vulkan_render_target* render_target )
+    -> fresult
+{
+    VkSwapchainKHR reuse_swapchain = nullptr;
+    vulkan_swapchain_destroy( arg );
+    *arg = {};
+    g_vulkan->swapchain.name = fmt::format( "version_{}", g_vulkan->frames_started );
+    g_vulkan->swapchain.vk_present_size = as<VkExtent2D>( g_render->ui_camera.sensor_size );
+
+    /** NOTE: We have to reset fences since anything that went wrong might result
+        in an un-presented frame and therefore a never-opened fence */
+    i32 i_limit = render_target->frames_inflight;
+    for (i32 i = 0; i < i_limit; ++i)
+    {
+        vkResetFences( g_vulkan->logical_device, 1, &g_vulkan->frames_inflight[i].end_fence );
+    }
+
+    vulkan_swapchain_init( arg, reuse_swapchain );
     return true;
 }
 
@@ -3304,8 +3361,12 @@ PROC vulkan_init() -> fresult
     /* Create per-frame data, we may have more than one frame going at once and per-frame resources
      NOTE: Dependant on descriptor resource data and pipeline data, must run afterwards */
     g_vulkan->frames_inflight.resize( g_vulkan->frames_inflight_count );
-    g_vulkan->frames_inflight.map_procedure( []( vulkan_frame& arg ) {
-        vulkan_frame_init( &arg ); });
+    i32 i_frame_limit = g_vulkan->frames_inflight.size();
+    for (i32 i=0; i < i_frame_limit; ++i)
+    {
+        vulkan_frame& arg = g_vulkan->frames_inflight[i];
+        vulkan_frame_init( &arg );
+    }
 
     // SECTION: Random Config Setup
     g_vulkan->config.clear_color = g_vulkan->config.clear_black;
@@ -3379,11 +3440,6 @@ PROC vulkan_start_frame() -> void
     if (g_vulkan->initialized == false) { return; }
     i64 current_frame_i = g_vulkan->frames_started;
 
-    // Don't try to draw on hidden windows, particularly buggy on Windows and X11
-    // TODO: WTF, the window doesn't appear until its been drawn to! (Wayland)
-    // if (sdl_is_window_visible( nullptr ) == false)
-    // {   return; }
-
     // -- Pre-Draw Start Setup and Reset Tasks
     // Clear acquire fence if we skipped the last frame
     TracyCZoneN( zone_new_frame, "Vulkan Acquire new Frame", true );
@@ -3408,6 +3464,12 @@ PROC vulkan_start_frame() -> void
     vulkan_frame* frame = g_vulkan->frames_inflight.address( inflight_frame_i );
     // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
 
+    if (g_vulkan->present_suboptimal_tag)
+    {
+        g_vulkan->present_suboptimal_tag = false;
+        vulkan_swapchain_invalid_reset( &g_vulkan->swapchain, g_vulkan->render_target );
+    }
+
     // Wait on 'frame_acquire_fence' before proceeding to reset the fence
     // NOTE: Allow the renderer to recycle through render loop and do other work if there is a timeout
     auto frame_end_timeout = vkWaitForFences(
@@ -3424,37 +3486,20 @@ PROC vulkan_start_frame() -> void
         g_vulkan->logical_device,
         g_vulkan->swapchain.platform_swapchain,
         0,
-        frame->image_acquire_semaphore,
+        g_vulkan->swapchain.image_acquire_semaphores[ inflight_frame_i ],
         frame->image_acquire_fence,
         &acquired_image_i
     );
 
-    if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR || g_vulkan->present_suboptimal_tag)
+    if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
     {
         // static time_periodic resize_delay( 16ms );
         // if (resize_delay.triggered() == false)
         // { return; }
 
-        /* if This code is reached there's a pretty good chance the widow was
-           resized or tampered with and it invalidated the swapchain.
-
-           We have to wait for all for all frames to finish before we're allowed
-           to regenerate the swapchain. */
-        g_vulkan->frames_inflight.map_procedure( [](vulkan_frame& arg) {
-            vkWaitForFences(
-                g_vulkan->logical_device, 1, &arg.end_fence, true, 500'000'000 );
-        } );
-
         // TODO: Bleh, can't figure out how to reuse swapchain safely, should probably avoid it for now
         // VkSwapchainKHR reuse_swapchain = g_vulkan->swapchain.platform_swapchain;
-        VkSwapchainKHR reuse_swapchain = nullptr;
-        // TODO: UNCOMMENT
-        vulkan_swapchain_destroy( &g_vulkan->swapchain );
-        g_vulkan->swapchain = {};
-        g_vulkan->swapchain.name = fmt::format( "version_{}", current_frame_i );
-        g_vulkan->swapchain.vk_present_size = as<VkExtent2D>( g_render->ui_camera.sensor_size );
-
-        vulkan_swapchain_init( &g_vulkan->swapchain, reuse_swapchain );
+        vulkan_swapchain_invalid_reset( &g_vulkan->swapchain, g_vulkan->render_target );
 
         // TODO: I think doing this again without running back to the top is a code smell
         // acquire_bad = vkAcquireNextImageKHR(
@@ -3873,7 +3918,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         // NOTE: We need to wait for an image to be available on the GPU side before submitting
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame->image_acquire_semaphore,
+        .pWaitSemaphores = &g_vulkan->swapchain.image_acquire_semaphores[ frame->inflight_index ],
         .pWaitDstStageMask = wait_stages,
         // Just the one command buffer for now
         .commandBufferCount = 1,
@@ -3910,7 +3955,6 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     {   VULKAN_ERRORF( "Fatal error '{}' with drawing and presentation 'VkQueuePresent'",
                        string_VkResult(present_bad) );
     }
-    // TODO: Re enable
     g_vulkan->present_suboptimal_tag = (present_bad == VK_SUBOPTIMAL_KHR);
 }
 
