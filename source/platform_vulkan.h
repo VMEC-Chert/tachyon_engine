@@ -415,6 +415,8 @@ struct vulkan_frame
     i32 blit_uniforms_used = 0;
 
     VkCommandBuffer command {};
+    /** Synchronized wait to ensure we don't continue working before the relevant image is ready */
+    VkFence image_acquire_fence {};
     VkFence end_fence {};
     // VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
@@ -507,10 +509,6 @@ struct vulkan_context
     vulkan_pipeline mesh_pipeline;
     vulkan_pipeline ui_mesh_pipeline;
     vulkan_pipeline ui_blit_pipeline;
-
-    // Ungrouped threading primitives
-    VkFence frame_begin_fence;
-    VkFence frame_acquire_fence;
 
     VkAllocationCallbacks allocator_callback {};
     // A pointer to the callback, may be null to turn it off
@@ -616,6 +614,12 @@ struct vulkan_context
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
             VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT),
     };
+
+    /** Getting VK_SUBOPTIMAL_KHR indicates something is wrong with the surface
+        and this seems to be causing issues so we're going to track it a bit more
+        carefully */
+    bool present_suboptimal_tag = false;
+
     // SECTION: Configurables
     vulkan_config config;
 

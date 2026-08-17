@@ -433,4 +433,17 @@ namespace tyon
         return false;
     }
 
+    PROC sdl_is_window_visible( sdl_window* arg ) -> fresult
+    {
+        // TODO: FIXME
+        if (arg == nullptr)
+        {   arg = &g_sdl->windows[0];
+        }
+
+        u32 window_flags = SDL_GetWindowFlags( arg->handle );
+        bool result = ((window_flags & SDL_WINDOW_MINIMIZED) &&
+                       (window_flags & SDL_WINDOW_HIDDEN));
+        return result;
+    }
+
 }

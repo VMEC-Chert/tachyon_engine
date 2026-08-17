@@ -10,8 +10,6 @@ namespace dyn
 }
 
 // NOTE: This may be called across an API boundry so on Windows it needs dllexport decleration
-// TODO: Need to figure out if this is ACTUALLY necessary
-// NOTE: Very likely yes.
 VKAPI_ATTR
 auto  VKAPI_CALL vulkan_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -230,6 +228,14 @@ PROC as( v2 arg ) -> VkExtent2D
 PROC vulkan_extent_2d_cast( v2 arg ) -> VkExtent2D
 {
     return VkExtent2D { static_cast<u32>(arg.x), u32(arg.y) };
+}
+
+PROC vulkan_surface_capabilities( VkSurfaceKHR surface ) -> VkSurfaceCapabilitiesKHR
+{
+    VkSurfaceCapabilitiesKHR result {};
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+            g_vulkan->device, surface, &result );
+        return result;
 }
 
 PROC vulkan_shader_init( vulkan_shader* arg ) -> fresult
@@ -1033,6 +1039,7 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     n_swapchain_images = clamp_i32( n_swapchain_images_ );
     if (n_swapchain_images != g_vulkan->frames_inflight_count)
     {   TYON_BREAK();
+
     }
 
     swapchain_images.resize( n_swapchain_images );
@@ -1089,6 +1096,18 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
             g_vulkan->render_target->depth_image_views[i]
         };
 
+        /** NOTE: X11 doesn't allow dynamic surface presentation so we have to
+         * re-create the swapchain every time it's resized */
+        bool requires_exact_surface_size = (g_render->window_platform == e_window_platform::x11);
+        if (requires_exact_surface_size)
+        {   VkSurfaceCapabilitiesKHR surface_capabilities {};
+            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                g_vulkan->device, g_vulkan->surface, &surface_capabilities );
+            arg->vk_present_size = VkExtent2D{ surface_capabilities.currentExtent };
+            VULKAN_LOGF( "Surface Height {} Present Height {}",
+                         surface_capabilities.currentExtent.height, arg->vk_present_size.height );
+        }
+
         VkFramebufferCreateInfo framebuffer_args{};
         framebuffer_args.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebuffer_args.renderPass = self->render_pass;
@@ -1103,6 +1122,15 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
             g_vulkan->vk_allocator, &swapchain_buffers[i] );
         vulkan_label_object( (u64)swapchain_buffers[i], VK_OBJECT_TYPE_FRAMEBUFFER,
                              fmt::format( "{}_swapchain_buffer_{}", arg->name, i ) );
+
+        VkSemaphoreCreateInfo semaphore_args {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = nullptr
+        };
+        VkResult semaphore_bad = vkCreateSemaphore(
+            g_vulkan->logical_device, &semaphore_args,
+            g_vulkan->vk_allocator, &g_vulkan->render_target->queue_submit_semaphores[i]
+        );
         ERROR_GUARD(view_errors[i] == VK_SUCCESS , "view creation error" );
         ERROR_GUARD(framebuffer_errors[i] == VK_SUCCESS , "fraembuffer creation error" );
     }
@@ -1119,6 +1147,7 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
         g_vulkan->allocator );
 
     // Can't destroy resources that are still in use
+    // TODO: What??? Do we not need device wait idle???
     vkDeviceWaitIdle( g_vulkan->logical_device );
     vkDestroyFramebuffer(
         g_vulkan->logical_device,
@@ -1134,17 +1163,23 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
         // multi-swapchain support
         vkDestroyImageView(
             g_vulkan->logical_device, g_vulkan->swapchain_image_views[i], g_vulkan->vk_allocator );
-    }
-    // Lazy destroy swapcarch vmhain because the handle still needs to be reused by next swapchain
-    auto swapchain = arg->platform_swapchain;
-    g_vulkan->resources.push_cleanup( [=]
-    {
-        vkDestroySwapchainKHR(
+
+        // Destroy semaphores too because we can't unsignal them once they've been claimed...
+        vulkan_render_target* render_target = g_vulkan->render_target;
+        vkDestroySemaphore(
             g_vulkan->logical_device,
-            swapchain,
+            render_target->queue_submit_semaphores[ i ],
             g_vulkan->vk_allocator
         );
-    });
+    }
+    // NOTE: I tried to lazy destroy the swapchain before but I don't think this
+    // is used.  and may never be used
+    vkDestroySwapchainKHR(
+        g_vulkan->logical_device,
+        arg->platform_swapchain,
+        g_vulkan->vk_allocator
+    );
+    // Nullify it so we don't double delte
     *arg = vulkan_swapchain {};
 }
 
@@ -1831,7 +1866,7 @@ PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
 {
     i32 i_limit_frames = arg->frames_inflight;
     // Allocate and size arrays
-    // arg->queue_submit_semaphores.resize( i_limit_frames );
+    arg->queue_submit_semaphores.resize( i_limit_frames );
     arg->depth_images.resize( i_limit_frames );
     arg->depth_image_views.resize( i_limit_frames );
 
@@ -1973,12 +2008,21 @@ PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult
         // Start signalled
         .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
+    // NOTE: image_acquire_fence should not start in the signalled state.
+    VkFenceCreateInfo image_acquire_fence_args {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        // Start signalled
+    };
 
     VkResult fence_bad = vkCreateFence(
         g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &arg->end_fence );
     vulkan_label_object( (u64)arg->end_fence, VK_OBJECT_TYPE_FENCE, "frame_end_fence"  );
-    if (fence_bad)
-    {   VULKAN_ERROR( "Failed to create frame end fence" ); }
+    VkResult acquire_fence_bad = vkCreateFence(
+        g_vulkan->logical_device, &image_acquire_fence_args,
+        g_vulkan->vk_allocator, &arg->image_acquire_fence );
+    vulkan_label_object( (u64)arg->image_acquire_fence, VK_OBJECT_TYPE_FENCE, "image_acquire_fence"  );
+    if (fence_bad || acquire_fence_bad)
+    {   VULKAN_ERROR( "Failed to create frame fences" ); }
 
     VkSemaphoreCreateInfo semaphore_args {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -2876,12 +2920,15 @@ PROC vulkan_init() -> fresult
     device_args.queueCreateInfoCount = clamp_u32( queues.size() );
     device_args.pEnabledFeatures = &device_features;
 
+    // TODO: Enumerate supported extensions and avoid enabling optional extensions
+    // TODO: Create 1 list for optional extensions and what list for required extensions
     array<cstring> device_extensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME, // Presentation swapchain extension
         // Interferes with debugging
         // VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, // Multiple pixels per fragment
         // Allows empty shader inputs/outputs
-         VK_EXT_VERTEX_ATTRIBUTE_ROBUSTNESS_EXTENSION_NAME
+        // NOTE: Doesn't work under LLVM
+         // VK_EXT_VERTEX_ATTRIBUTE_ROBUSTNESS_EXTENSION_NAME
     };
     device_args.ppEnabledLayerNames = enabled_layers.data;
     device_args.enabledLayerCount = clamp_u32( enabled_layers.size() );
@@ -2912,22 +2959,6 @@ PROC vulkan_init() -> fresult
     // So we can make a present queue from the same family.
     vkGetDeviceQueue( g_vulkan->logical_device, graphics_queue_family, 0, &graphics_queue );
     vkGetDeviceQueue( g_vulkan->logical_device, graphics_queue_family, 0, &present_queue );
-
-    // Create Threading Primitives
-    VkFenceCreateInfo fence_args {};
-    fence_args.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    bool fence_ok = true;
-    fence_ok &= VK_SUCCESS == vkCreateFence(
-        g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &g_vulkan->frame_acquire_fence );
-    // Signal the begin fence to prevent it hanging
-    fence_args.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    fence_ok &= VK_SUCCESS == vkCreateFence(
-        g_vulkan->logical_device, &fence_args, g_vulkan->vk_allocator, &g_vulkan->frame_begin_fence );
-    if (fence_ok == false) { return false; }
-    vulkan_label_object(
-        (u64)self->frame_begin_fence, VK_OBJECT_TYPE_FENCE, "frame_begin_fence" );
-    vulkan_label_object(
-        (u64)self->frame_acquire_fence, VK_OBJECT_TYPE_FENCE, "frame_acquire_fence" );
 
     // NOTE: Deleted semaphore creation here, it should be per-frame for
     // multiple inflight frames synchronization
@@ -3348,12 +3379,29 @@ PROC vulkan_start_frame() -> void
     if (g_vulkan->initialized == false) { return; }
     i64 current_frame_i = g_vulkan->frames_started;
 
+    // Don't try to draw on hidden windows, particularly buggy on Windows and X11
+    // TODO: WTF, the window doesn't appear until its been drawn to! (Wayland)
+    // if (sdl_is_window_visible( nullptr ) == false)
+    // {   return; }
+
     // -- Pre-Draw Start Setup and Reset Tasks
     // Clear acquire fence if we skipped the last frame
     TracyCZoneN( zone_new_frame, "Vulkan Acquire new Frame", true );
 
     // NOTE: Before we start we need to see if the next image is actually ready to work on
     // NOTE: vkAcquireNextImageKHR is supposed to increment sequentially.
+
+    /** Debug logging
+
+        NOTE: We test this before acquiring a frame because I suspect the
+        surface change blocks starting a new frame properly */
+    VkSurfaceCapabilitiesKHR surface_capabilities = vulkan_surface_capabilities( g_vulkan->surface );
+     VULKAN_LOGF(
+         "Surface Extent - Current/Min/Max [{} {}] [{} {}] [{} {}]",
+         surface_capabilities.currentExtent.width, surface_capabilities.currentExtent.height,
+         surface_capabilities.minImageExtent.width, surface_capabilities.minImageExtent.height,
+         surface_capabilities.maxImageExtent.width, surface_capabilities.maxImageExtent.height
+     );
 
     u32 acquired_image_i = {};
     u32 inflight_frame_i = g_vulkan->render_target->frames_inflight_i;
@@ -3377,11 +3425,11 @@ PROC vulkan_start_frame() -> void
         g_vulkan->swapchain.platform_swapchain,
         0,
         frame->image_acquire_semaphore,
-        g_vulkan->frame_acquire_fence,
+        frame->image_acquire_fence,
         &acquired_image_i
     );
 
-    if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
+    if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR || g_vulkan->present_suboptimal_tag)
     {
         // static time_periodic resize_delay( 16ms );
         // if (resize_delay.triggered() == false)
@@ -3396,10 +3444,16 @@ PROC vulkan_start_frame() -> void
             vkWaitForFences(
                 g_vulkan->logical_device, 1, &arg.end_fence, true, 500'000'000 );
         } );
-        VkSwapchainKHR reuse_swapchain = g_vulkan->swapchain.platform_swapchain;
+
+        // TODO: Bleh, can't figure out how to reuse swapchain safely, should probably avoid it for now
+        // VkSwapchainKHR reuse_swapchain = g_vulkan->swapchain.platform_swapchain;
+        VkSwapchainKHR reuse_swapchain = nullptr;
+        // TODO: UNCOMMENT
         vulkan_swapchain_destroy( &g_vulkan->swapchain );
+        g_vulkan->swapchain = {};
         g_vulkan->swapchain.name = fmt::format( "version_{}", current_frame_i );
         g_vulkan->swapchain.vk_present_size = as<VkExtent2D>( g_render->ui_camera.sensor_size );
+
         vulkan_swapchain_init( &g_vulkan->swapchain, reuse_swapchain );
 
         // TODO: I think doing this again without running back to the top is a code smell
@@ -3433,15 +3487,14 @@ PROC vulkan_start_frame() -> void
     frame->acquired_image_i = acquired_image_i;
 
     // NOTE: Overly verbose logging, was only meant for targeted debugging
-    // VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}",
-    // inflight_frame_i, frame->acquired_image_i );
-
+    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}",
+    inflight_frame_i, frame->acquired_image_i );
 
     /* Wait for frame acquire before proceeding to resetting command buffer This
        sort of halts when the next frame is not completed or blocked so no more
        work can be done */
     auto frame_timeout = vkWaitForFences(
-        g_vulkan->logical_device, 1, &self->frame_acquire_fence, true, 16'666'666 );
+        g_vulkan->logical_device, 1, &frame->image_acquire_fence, true, 16'666'666 );
 
     if (frame_timeout == VK_TIMEOUT)
     {   VULKAN_ERRORF( "Frame: {}] | Missed frame!", current_frame_i );
@@ -3462,7 +3515,7 @@ PROC vulkan_start_frame() -> void
     g_vulkan->frames_completed++;
     FrameMarkEnd( "Vulkan Inflight Frame" );
     // NOTE: If we passed the frame_acquire_fence timeout early return we can reset safely
-    vkResetFences( self->logical_device, 1, &g_vulkan->frame_acquire_fence );
+    vkResetFences( self->logical_device, 1, &frame->image_acquire_fence );
     FrameMarkStart( "Vulkan Inflight Frame" );
 
     // -- Get started on new frame --
@@ -3857,10 +3910,8 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     {   VULKAN_ERRORF( "Fatal error '{}' with drawing and presentation 'VkQueuePresent'",
                        string_VkResult(present_bad) );
     }
-
-    // TODO: Remove because useless now?
-    // auto frame_timeout = vkWaitForFences(
-    // g_vulkan->logical_device, 1, &frame_end_fence, true, 1'000'000'000 );
+    // TODO: Re enable
+    g_vulkan->present_suboptimal_tag = (present_bad == VK_SUBOPTIMAL_KHR);
 }
 
 PROC vulkan_draw_command_acquire_resource(
