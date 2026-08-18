@@ -12,6 +12,7 @@ namespace tyon
 FORWARD struct vulkan_memory;
 FORWARD struct vulkan_frame;
 FORWARD struct vulkan_draw_command;
+FORWARD struct vulkan_image;
 
 enum class e_vulkan_shader_debug : i32
 {
@@ -94,8 +95,17 @@ struct vulkan_swapchain
     bool initialized = false;
     resource_arena resources;
 
+    array<vulkan_image*> depth_images;
+    array<VkImageView> depth_image_views;
     array<VkSemaphore> image_acquire_semaphores {};
     array<VkFence> end_fences {};
+
+    // TODO: What are these images for????
+    array<VkImage> images;
+    /** Views describe how to interpret VkImage's, VkImages are related to
+        textures and framebuffers */
+    array<VkImageView> image_views;
+    array<VkFramebuffer> framebuffers;
 };
 
 struct vulkan_pipeline
@@ -422,6 +432,10 @@ struct vulkan_frame
     VkFence image_acquire_fence {};
     VkFence end_fence {};
 
+    /** NOTE: Once an image acquired it cannot be left and must be finished or
+     * it will stall the GPU and break the pipeline state without deliberate
+     * intervention, therefore we must track when we acquire an image and handle
+     * it carefully. */
     bool image_acquired_tag = false;
     // VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
@@ -439,7 +453,6 @@ struct vulkan_render_target
 {
     uid id;
     fstring name;
-    // TODO: Change these to entity references
     array<vulkan_frame*> frames;
     /** Max number of inflight frames */
     i32 frames_inflight = 3;
@@ -450,8 +463,6 @@ struct vulkan_render_target
 
         WARNING: This will be quite tricky to track state correctly.*/
     vulkan_swapchain* swapchain;
-    array<vulkan_image*> depth_images;
-    array<VkImageView> depth_image_views;
     /** NOTE: The image acquired is not related to the current frame we're
      * working on and this can cause overlapping semaphore usage if this is not
      * taken into account, because of this it cannot be put in vulkan_frame
@@ -491,11 +502,6 @@ struct vulkan_context
     // Primary Window surface to draw to
     VkSurfaceKHR surface;
     VkCommandPool command_pool;
-    /** Views describe how to interpret VkImage's, VkImages are related to
-        textures and framebuffers */
-    array<VkImageView> swapchain_image_views;
-    array<VkFramebuffer> swapchain_framebuffers;
-    array<VkImage> swapchain_images;
     i32 graphics_queue_family = -1;
     i32 present_queue_family = -1;
     VkQueue graphics_queue;
@@ -581,6 +587,7 @@ struct vulkan_context
 
     // Configurables
     VkFormat swapchain_image_format = VK_FORMAT_B8G8R8A8_SRGB;
+    VkFormat depth_image_format = VK_FORMAT_D32_SFLOAT;
     /** This should be enough to fit 1 very large object, like 1 million verticies
         1 200 000 × 4 × 3 × 4 = 54.931 MiB
 
@@ -664,6 +671,9 @@ PROC vulkan_vertex_buffer_size( i64 vertexes ) -> i64;
 PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
 PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>;
+
+/** Allocates and initializes an depth buffer/image entity */
+PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>;
 
 PROC vulkan_frame_init( vulkan_frame* arg ) -> fresult;
 

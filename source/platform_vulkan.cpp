@@ -946,6 +946,8 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     };
     i32 i_limit = g_vulkan->render_target->frames_inflight;
     arg->end_fences.resize( i_limit );
+    arg->depth_images.resize( i_limit );
+    arg->depth_image_views.resize( i_limit );
     for (i32 i = 0; i < i_limit; ++i)
     {
         VkResult acquire_sempahore_bad = vkCreateSemaphore(
@@ -967,6 +969,48 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
         if (fence_bad)
         {   return false;
         }
+
+
+    // PURPOSE: Create a depth buffer for attachment for each swapchain image
+    // NOTE: Need to create depth buffer before referencing data in attachments and refs
+    // NOTE: Just accept it as nullptr if depth buffer it wasn't created successfully
+    // TODO: This needs to be split out into per vulkan_render_target initialization
+
+        vulkan_image* depth_buffer_image = vulkan_image_depth_allocate().value;
+        if (depth_buffer_image == nullptr)
+        {   VULKAN_ERROR( "Failed to create depth buffer, bailing" );
+            return false;
+        }
+        // VkImage depth_buffer = depth_buffer_image->platform_image; TODO delete?
+        arg->depth_images[i] = depth_buffer_image;
+
+        VkImageView depth_buffer_view {};
+        VkImageViewCreateInfo view_args{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = 0,
+            .flags = 0,
+            .image = depth_buffer_image->platform_image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = depth_buffer_image->platform_format,
+            .components { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
+                          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, },
+            .subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .subresourceRange.baseMipLevel = 0,
+            .subresourceRange.levelCount = 1,
+            .subresourceRange.baseArrayLayer = 0,
+            .subresourceRange.layerCount = 1,
+        };
+
+        VkResult view_error = vkCreateImageView(
+            g_vulkan->logical_device, &view_args, g_vulkan->vk_allocator, &depth_buffer_view );
+        fstring debug_name = fmt::format( "{}_depth_image_view_{}", "unnamed", i );
+        if (depth_buffer_view == VK_NULL_HANDLE)
+        {   VULKAN_ERRORF( "Failed to create depth buffer: {}", debug_name );
+            return false;
+        }
+        // Only label it after the object exists
+        vulkan_label_object( (u64)depth_buffer_view, VK_OBJECT_TYPE_IMAGE_VIEW, debug_name );
+        arg->depth_image_views[i] = depth_buffer_view;
     }
 
     if  (g_vulkan->surface)
@@ -1061,7 +1105,7 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         g_vulkan->device, g_vulkan->surface, &surface_capabilities_2 );
 
-    array<VkImage>& swapchain_images = g_vulkan->swapchain_images;
+    array<VkImage>& swapchain_images = arg->images;
     u32 n_swapchain_images_ = 0;
     i32 n_swapchain_images = 0;
     vkGetSwapchainImagesKHR( g_vulkan->logical_device, arg->platform_swapchain,
@@ -1079,8 +1123,8 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
 
 /** Views describe how to interpret VkImage's, VkImages are related to
     textures and framebuffers */
-    array<VkImageView>& swapchain_image_views = g_vulkan->swapchain_image_views;
-    array<VkFramebuffer>& swapchain_buffers = g_vulkan->swapchain_framebuffers;
+    array<VkImageView>& swapchain_image_views = arg->image_views;
+    array<VkFramebuffer>& swapchain_buffers = arg->framebuffers;
     array<VkResult> view_errors;
     array<VkResult> framebuffer_errors;
     array<VkResult> fence_errors;
@@ -1123,7 +1167,7 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
             later on., it might be actually required to display images to the
             screen but its just not clear. */
             swapchain_image_views[i],
-            g_vulkan->render_target->depth_image_views[i]
+            arg->depth_image_views[i]
         };
 
         /** NOTE: X11 doesn't allow dynamic surface presentation so we have to
@@ -1185,14 +1229,22 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
         g_vulkan->vk_allocator
     );
     // TODO: Switch size to using n_images
-    for (i32 i=0; i < g_vulkan->swapchain_image_views.size(); ++i)
+    for (i32 i=0; i < arg->image_views.size(); ++i)
     {
+        // Destroy all of these objects then nullify their handle4
+
         vkDestroyFramebuffer(
-            g_vulkan->logical_device, g_vulkan->swapchain_framebuffers[i], g_vulkan->vk_allocator );
+            g_vulkan->logical_device, arg->framebuffers[i], g_vulkan->vk_allocator );
+        arg->framebuffers[i];
         // TODO: Make sure this are associated with swapchain instead later for
         // multi-swapchain support
         vkDestroyImageView(
-            g_vulkan->logical_device, g_vulkan->swapchain_image_views[i], g_vulkan->vk_allocator );
+            g_vulkan->logical_device, arg->image_views[i], g_vulkan->vk_allocator );
+        arg->image_views[i] = {};
+
+        vkDestroyImage(
+            g_vulkan->logical_device, arg->depth_images[i]->platform_image, g_vulkan->vk_allocator );
+        *arg->depth_images[i] = {};
 
         // Destroy semaphores too because we can't unsignal them once they've been claimed...
         vulkan_render_target* render_target = g_vulkan->render_target;
@@ -1551,6 +1603,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
 {
     monad<vulkan_memory_entry> result;
     result.error = true;
+    VULKAN_LOGF( "Trying to allocate untyped memory size: {}", args.size );
+
     i32 i_attempts = 0;
     i32 attempts_limit = 3;
     for (; i_attempts < attempts_limit; ++i_attempts)
@@ -1907,8 +1961,6 @@ PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
     i32 i_limit_frames = arg->frames_inflight;
     // Allocate and size arrays
     arg->queue_submit_semaphores.resize( i_limit_frames );
-    arg->depth_images.resize( i_limit_frames );
-    arg->depth_image_views.resize( i_limit_frames );
 
     VkResult semaphore_bad = VK_SUCCESS;
     bool semaphore_all_bad = false;
@@ -2570,6 +2622,8 @@ PROC vulkan_swapchain_invalid_reset( vulkan_swapchain* arg, vulkan_render_target
     VkSwapchainKHR reuse_swapchain = nullptr;
 
     // NOTE: Have to wait on frames to finsih before attempting to destroy anything
+    // TODO: SHOULD WE NOT WAIT FOR FENCES?!
+
     g_vulkan->frames_inflight.map_procedure( [](vulkan_frame& arg) {
         vkWaitForFences(
             g_vulkan->logical_device, 1, &arg.end_fence, true, 10'000'000'000 );
@@ -2580,13 +2634,9 @@ PROC vulkan_swapchain_invalid_reset( vulkan_swapchain* arg, vulkan_render_target
     g_vulkan->swapchain.name = fmt::format( "version_{}", g_vulkan->frames_started );
     g_vulkan->swapchain.vk_present_size = as<VkExtent2D>( g_render->ui_camera.sensor_size );
 
-    /** NOTE: We have to reset fences since anything that went wrong might result
-        in an un-presented frame and therefore a never-opened fence */
-    i32 i_limit = render_target->frames_inflight;
-    for (i32 i = 0; i < i_limit; ++i)
-    {
-        vkResetFences( g_vulkan->logical_device, 1, &g_vulkan->frames_inflight[i].end_fence );
-    }
+    /** NOTE: I tried to reset fences here before. This is WRONG. The fence must
+     * be in a SIGNALLED state to allow progression thorugh the fence, not
+     * reset. */
 
     vulkan_swapchain_init( arg, reuse_swapchain );
     return true;
@@ -2996,7 +3046,7 @@ PROC vulkan_init() -> fresult
         // VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, // Multiple pixels per fragment
         // Allows empty shader inputs/outputs
         // NOTE: Doesn't work under LLVM
-         // VK_EXT_VERTEX_ATTRIBUTE_ROBUSTNESS_EXTENSION_NAME
+         VK_EXT_VERTEX_ATTRIBUTE_ROBUSTNESS_EXTENSION_NAME
     };
     device_args.ppEnabledLayerNames = enabled_layers.data;
     device_args.enabledLayerCount = clamp_u32( enabled_layers.size() );
@@ -3170,52 +3220,6 @@ PROC vulkan_init() -> fresult
 
     vulkan_render_target_init( g_vulkan->render_target );
 
-    // PURPOSE: Create a depth buffer for attachment for each swapchain image
-    // NOTE: Need to create depth buffer before referencing data in attachments and refs
-    // NOTE: Just accept it as nullptr if depth buffer it wasn't created successfully
-    // TODO: This needs to be split out into per vulkan_render_target initialization
-    i32 i_limit_frames = g_vulkan->render_target->frames_inflight;
-    g_vulkan->render_target->depth_images.resize( i_limit_frames );
-    g_vulkan->render_target->depth_image_views.resize( i_limit_frames );
-    for (i32 i=0; i < i_limit_frames; ++i)
-    {
-        vulkan_image* depth_buffer_image = vulkan_image_depth_allocate().value;
-        if (depth_buffer_image == nullptr)
-        {   VULKAN_ERROR( "Failed to create depth buffer, bailing" );
-            return false;
-        }
-        // VkImage depth_buffer = depth_buffer_image->platform_image; TODO delete?
-        g_vulkan->render_target->depth_images[i] = depth_buffer_image;
-
-        VkImageView depth_buffer_view {};
-        VkImageViewCreateInfo view_args{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .pNext = 0,
-            .flags = 0,
-            .image = depth_buffer_image->platform_image,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = depth_buffer_image->platform_format,
-            .components { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
-                          VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, },
-            .subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-            .subresourceRange.baseMipLevel = 0,
-            .subresourceRange.levelCount = 1,
-            .subresourceRange.baseArrayLayer = 0,
-            .subresourceRange.layerCount = 1,
-        };
-
-        VkResult view_error = vkCreateImageView(
-            g_vulkan->logical_device, &view_args, g_vulkan->vk_allocator, &depth_buffer_view );
-        fstring debug_name = fmt::format( "{}_depth_image_view_{}", "unnamed", i );
-        if (depth_buffer_view == VK_NULL_HANDLE)
-        {   VULKAN_ERRORF( "Failed to create depth buffer: {}", debug_name );
-            return false;
-        }
-        // Only label it after the object exists
-        vulkan_label_object( (u64)depth_buffer_view, VK_OBJECT_TYPE_IMAGE_VIEW, debug_name );
-        g_vulkan->render_target->depth_image_views[i] = depth_buffer_view;
-    }
-
     array<VkAttachmentReference> color_attachment_refs = {
         VkAttachmentReference {
             .attachment = 0,
@@ -3247,7 +3251,7 @@ PROC vulkan_init() -> fresult
         },
         // 1 - depth buffer
         VkAttachmentDescription {
-            .format         = g_vulkan->render_target->depth_images[0]->platform_format,
+            .format         = VK_FORMAT_D32_SFLOAT,
             .samples        = VK_SAMPLE_COUNT_1_BIT,
             // Clear the previous content of this buffer
             .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -3479,7 +3483,15 @@ PROC vulkan_start_frame() -> void
     vulkan_frame* frame = g_vulkan->frames_inflight.address( inflight_frame_i );
     // NOTE: We should wait on fence of the previous set of frames before trying to acquire a new one
 
-    if (g_vulkan->present_suboptimal_tag)
+    bool window_sized_changed = (
+        (g_sdl->main_window->size.x != g_vulkan->swapchain.vk_present_size.width) ||
+        (g_sdl->main_window->size.y != g_vulkan->swapchain.vk_present_size.height)
+    );
+
+    bool swapchain_invalidated = (
+        g_vulkan->present_suboptimal_tag ||
+        (g_render->window_platform == e_window_platform::x11 && window_sized_changed));
+    if (swapchain_invalidated)
     {
         g_vulkan->present_suboptimal_tag = false;
         vulkan_swapchain_invalid_reset( &g_vulkan->swapchain, g_vulkan->render_target );
@@ -3487,15 +3499,21 @@ PROC vulkan_start_frame() -> void
 
     // Wait on 'frame_acquire_fence' before proceeding to reset the fence
     // NOTE: Allow the renderer to recycle through render loop and do other work if there is a timeout
-    auto frame_end_timeout = vkWaitForFences(
+    VkResult frame_end_timeout = vkWaitForFences(
         g_vulkan->logical_device, 1, &frame->end_fence, true, 16'000'000 );
     if (frame_end_timeout == VK_TIMEOUT)
     {   VULKAN_ERRORF( "Huge hitch waiting on frame index {}", inflight_frame_i );
         return;
     }
+    if (frame_end_timeout)
+    {   VULKAN_ERRORF( "Error whilst waiting on fence for frame to end {}",
+                       string_VkResult( frame_end_timeout) );
+    }
 
     // NOTE: We passed the fence successfully, we can reset the fence and continue
     vulkan_fence_wait_reset( frame->end_fence, frame_end_timeout );
+    // NOTE: We can reasonably assume the frame no longer is waiting on an acquired image also
+    frame->image_acquired_tag = false;
 
     auto acquire_bad = vkAcquireNextImageKHR(
         g_vulkan->logical_device,
@@ -3505,6 +3523,9 @@ PROC vulkan_start_frame() -> void
         frame->image_acquire_fence,
         &acquired_image_i
     );
+    if (acquire_bad == VK_SUCCESS)
+    {   frame->image_acquired_tag = true;
+    }
 
     if (acquire_bad == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -3570,7 +3591,8 @@ PROC vulkan_start_frame() -> void
         return;
     }
     else if (frame_timeout)
-    {   // TODO: Undocumented and unconsidered error cases
+    {   VULKAN_ERRORF( "Timed out waiting on fence image_acquire_timeout {}",
+                      string_VkResult( frame_timeout ) );
         return;
     }
     // VULKAN_LOGF( "Frame: {} | Completed Frame.", current_frame_i );
@@ -3763,7 +3785,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     VkRenderPassBeginInfo render_pass_args{};
     render_pass_args.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_args.renderPass = g_vulkan->render_pass;
-    render_pass_args.framebuffer = g_vulkan->swapchain_framebuffers[ frame->acquired_image_i ];
+    render_pass_args.framebuffer = g_vulkan->swapchain.framebuffers[ frame->acquired_image_i ];
     render_pass_args.renderArea.offset = {0, 0};
     render_pass_args.renderArea.extent = g_vulkan->swapchain.vk_present_size;
     render_pass_args.clearValueCount = clear_values.size();
