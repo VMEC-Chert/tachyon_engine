@@ -2384,6 +2384,10 @@ PROC vulkan_transfer_queue_image(
 PROC vulkan_image_prepare( render_image* arg, vulkan_frame* frame ) -> fresult
 {
     render_image* current_image = arg;
+    bool ignore_empty = arg->image.zero_size();
+    if (ignore_empty)
+    {   return false;
+    }
 
     // Find the associated vulkan image
     auto image_result = g_vulkan->images.linear_search( [=]( vulkan_image& arg_ ) {
@@ -2564,6 +2568,13 @@ PROC vulkan_swapchain_invalid_reset( vulkan_swapchain* arg, vulkan_render_target
     -> fresult
 {
     VkSwapchainKHR reuse_swapchain = nullptr;
+
+    // NOTE: Have to wait on frames to finsih before attempting to destroy anything
+    g_vulkan->frames_inflight.map_procedure( [](vulkan_frame& arg) {
+        vkWaitForFences(
+            g_vulkan->logical_device, 1, &arg.end_fence, true, 10'000'000'000 );
+    } );
+
     vulkan_swapchain_destroy( arg );
     *arg = {};
     g_vulkan->swapchain.name = fmt::format( "version_{}", g_vulkan->frames_started );
@@ -3205,6 +3216,13 @@ PROC vulkan_init() -> fresult
         g_vulkan->render_target->depth_image_views[i] = depth_buffer_view;
     }
 
+    array<VkAttachmentReference> color_attachment_refs = {
+        VkAttachmentReference {
+            .attachment = 0,
+            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        },
+    };
+
     // NOTE: References index in future attachment layout list
     VkAttachmentReference depth_attachment_refs {
         .attachment = 1,
@@ -3243,13 +3261,6 @@ PROC vulkan_init() -> fresult
         }
     };
 
-    // Not used right now, this is if you want to add extra layers like pixel tagging
-    array<VkAttachmentReference> color_attachment_refs {
-        // VkAttachmentReference {
-        //     .attachment = 0,
-        //     .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        // },
-    };
     array<VkAttachmentReference> input_attachment_refs {
         // NOTE: This was when testing image compositing I don't think we need this anymore
         // VkAttachmentReference {
@@ -3265,9 +3276,13 @@ PROC vulkan_init() -> fresult
     sub_pass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     sub_pass.pInputAttachments = nullptr;
     sub_pass.inputAttachmentCount = 0;
-    // Leave null while not being used
+    /** NOTE: I managed to confuse input attachments and colour attachments, I
+     * believe colour attachments are definately needed for basic swapchain
+     * images, but input attachments are completely optional. */
     sub_pass.pColorAttachments = color_attachment_refs.data;
     sub_pass.colorAttachmentCount = clamp_u32( color_attachment_refs.size() );
+    sub_pass.pColorAttachments = nullptr;
+    sub_pass.colorAttachmentCount = 0;
     sub_pass.pDepthStencilAttachment = &depth_attachment_refs;
 
     VkRenderPass& render_pass = g_vulkan->render_pass;
@@ -3452,12 +3467,12 @@ PROC vulkan_start_frame() -> void
         NOTE: We test this before acquiring a frame because I suspect the
         surface change blocks starting a new frame properly */
     VkSurfaceCapabilitiesKHR surface_capabilities = vulkan_surface_capabilities( g_vulkan->surface );
-     VULKAN_LOGF(
-         "Surface Extent - Current/Min/Max [{} {}] [{} {}] [{} {}]",
-         surface_capabilities.currentExtent.width, surface_capabilities.currentExtent.height,
-         surface_capabilities.minImageExtent.width, surface_capabilities.minImageExtent.height,
-         surface_capabilities.maxImageExtent.width, surface_capabilities.maxImageExtent.height
-     );
+     // VULKAN_LOGF(
+     //     "Surface Extent - Current/Min/Max [{} {}] [{} {}] [{} {}]",
+     //     surface_capabilities.currentExtent.width, surface_capabilities.currentExtent.height,
+     //     surface_capabilities.minImageExtent.width, surface_capabilities.minImageExtent.height,
+     //     surface_capabilities.maxImageExtent.width, surface_capabilities.maxImageExtent.height
+     // );
 
     u32 acquired_image_i = {};
     u32 inflight_frame_i = g_vulkan->render_target->frames_inflight_i;
@@ -3532,17 +3547,20 @@ PROC vulkan_start_frame() -> void
     frame->acquired_image_i = acquired_image_i;
 
     // NOTE: Overly verbose logging, was only meant for targeted debugging
-    VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}",
-    inflight_frame_i, frame->acquired_image_i );
+    // VULKAN_LOGF( "Current Image Index: {} Acquired Image Index: {}",
+    // inflight_frame_i, frame->acquired_image_i );
 
     /* Wait for frame acquire before proceeding to resetting command buffer This
        sort of halts when the next frame is not completed or blocked so no more
        work can be done */
     auto frame_timeout = vkWaitForFences(
-        g_vulkan->logical_device, 1, &frame->image_acquire_fence, true, 16'666'666 );
+        g_vulkan->logical_device, 1,
+        &frame->image_acquire_fence, true, g_vulkan->config.image_acquire_timeout );
 
     if (frame_timeout == VK_TIMEOUT)
-    {   VULKAN_ERRORF( "Frame: {}] | Missed frame!", current_frame_i );
+    {   VULKAN_ERRORF( "Frame: {}] | Missed frame! Something really bad happened. \n"
+                       "It took {} ns to acquire an image!",
+                       current_frame_i, g_vulkan->config.image_acquire_timeout );
         return;
     }
     else if (frame_timeout == VK_ERROR_DEVICE_LOST)
@@ -3738,7 +3756,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     // Set render pass start information
     // NOTE: We need 1 clear color for every attachment in the pass, currently 2
     array<VkClearValue> clear_values {
-        g_vulkan->config.clear_color,
+        g_vulkan->config.clear_purple,
         g_vulkan->config.clear_depth
     };
     // VkClearValue clear_values[] = { clear_value, clear_value };
@@ -3910,8 +3928,10 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     }
 
     // TODO: I don't know what stages to wait on here, I'm just following guides/AI
-    VkPipelineStageFlags wait_stages[] { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT };
+    VkPipelineStageFlags wait_stages[] {
+        // VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+    };
 
     // Finalize frame and submit all commands
     VkSubmitInfo submit_args {
@@ -3955,6 +3975,7 @@ PROC vulkan_command_draw( vulkan_frame* frame ) -> void
     {   VULKAN_ERRORF( "Fatal error '{}' with drawing and presentation 'VkQueuePresent'",
                        string_VkResult(present_bad) );
     }
+    VULKAN_LOG( "Presented frame" );
     g_vulkan->present_suboptimal_tag = (present_bad == VK_SUBOPTIMAL_KHR);
 }
 

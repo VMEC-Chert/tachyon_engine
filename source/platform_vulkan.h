@@ -421,6 +421,8 @@ struct vulkan_frame
     /** Synchronized wait to ensure we don't continue working before the relevant image is ready */
     VkFence image_acquire_fence {};
     VkFence end_fence {};
+
+    bool image_acquired_tag = false;
     // VkSemaphore queue_submit_semaphore {};
     /** Signalled around the end of a frame*/
     VkSemaphore frame_end_semaphore {};
@@ -431,7 +433,6 @@ struct vulkan_frame
     array<mesh*> draw_queue_mesh;
     array< render_image*> draw_queue_image;
     array< vulkan_draw_command > draw_queue_command;
-
 };
 
 struct vulkan_render_target
@@ -439,11 +440,15 @@ struct vulkan_render_target
     uid id;
     fstring name;
     // TODO: Change these to entity references
-    // array<vulkan_frame*> frames;
+    array<vulkan_frame*> frames;
     /** Max number of inflight frames */
     i32 frames_inflight = 3;
     /** Index of current frame being worked on for this render target */
     i32 frames_inflight_i = 0;
+    /** If a vkAcquireNextImageKHR is successful then it must be completed before moving on.
+        This tracks if a frame has been acquired.
+
+        WARNING: This will be quite tricky to track state correctly.*/
     vulkan_swapchain* swapchain;
     array<vulkan_image*> depth_images;
     array<VkImageView> depth_image_views;
@@ -465,6 +470,7 @@ struct vulkan_config
     VkClearValue clear_black {{ 0.0f, 0.0f, 0.0f, 0.0f }};
     // NOTE: 1.0 is the correct stand far clip plane for depth buffers
     VkClearValue clear_depth { .depthStencil { 1.0f, 0} };
+    time_monotonic_ns image_acquire_timeout = 20'666'666'666;
 };
 
 using vulkan_result_stats = std::unordered_map<VkResult, i32>;
@@ -515,7 +521,11 @@ struct vulkan_context
     vulkan_swapchain swapchain;
     /** Primary render target */
     vulkan_render_target* render_target;
+
+    // Section: Entities
     entity_list<vulkan_render_target> render_targets;
+    entity_list<vulkan_frame*> frames;
+
 
     array<mesh*> tmp_meshes;
     array<vulkan_mesh> meshes;
