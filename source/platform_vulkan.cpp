@@ -1242,9 +1242,8 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
             g_vulkan->logical_device, arg->image_views[i], g_vulkan->vk_allocator );
         arg->image_views[i] = {};
 
-        vkDestroyImage(
-            g_vulkan->logical_device, arg->depth_images[i]->platform_image, g_vulkan->vk_allocator );
-        *arg->depth_images[i] = {};
+        vulkan_image* depth_image = arg->depth_images[i];
+        vulkan_image_destroy( depth_image );
 
         // Destroy semaphores too because we can't unsignal them once they've been claimed...
         vulkan_render_target* render_target = g_vulkan->render_target;
@@ -1441,6 +1440,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     new_block->entries.nodes.resize( 4096 );
 
     vulkan_memory_entry start_entry = {
+        .type = e_vulkan_memory_object::none,
         .block = (context->blocks.size() - 1),
         .index = 0,
         .position = 0,
@@ -1448,7 +1448,6 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
         .size = 0,
         .reserved_size = arg->size,
         .alignment = 1,
-        .type = e_vulkan_memory_object::none
     };
     // Add entry to the list and free list
     auto start_node = new_block->entries.push_tail( start_entry );
@@ -1698,6 +1697,50 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
     {   VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
     }
     return result;
+}
+
+PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void
+{
+    // TODO: Unfinished, code is bogus, returns early
+    return;
+    /** Iterate over the blocks and coalesce all the memory entries.  This
+        requires checking if each entry is tagged as used or free and merging
+        the size and position with the adjacient nodes. */
+    i32 block_limit = arg->blocks.size();
+    for (i32 i_block=0; i_block < block_limit; ++i_block)
+    {
+        vulkan_memory_block* x_block = &arg->blocks[ i_block ];
+        i32 entry_limit = x_block->entries.size();
+        for (i32 i_entry=0; i_entry < entry_limit; ++i_entry)
+        {
+            vulkan_memory_node* x_node = &x_block->entries.nodes[ i_entry ];
+            vulkan_memory_entry* x_entry = &x_node->value;
+            // if (type == none && x_entry.size > 0)
+            // vulkan_memory_node*
+            // memory_node.remove_node( memory_node );
+        }
+    }
+}
+
+PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry allocation ) -> void
+{
+    vulkan_memory_block* block = &arg->blocks[ allocation.block ];
+    vulkan_memory_node* memory_node = block->entries[ allocation.index ].value;
+    vulkan_memory_entry* memory_entry = &memory_node->value;
+    if (memory_node == nullptr)
+    {   VULKAN_ERROR( "Tried to deallocate a null block: {} index: {}",
+                      allocation.block, allocation.index );
+        return;
+    }
+    if (memory_entry->type == e_vulkan_memory_object::none)
+    {   VULKAN_ERRORF( "Memory deallocate called on unallocated memory entry block: {} index: {} \n"
+                       "This is not an error but is indicative of an issue with logic",
+                       allocation.block, allocation.index );
+        return;
+    }
+    // This sets the entry as free
+    memory_entry->type = e_vulkan_memory_object::none;
+    vulkan_memory_coalesce( arg );
 }
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
@@ -1955,6 +1998,16 @@ PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>
     result = { image, suballocate_ok };
     return result;
 }
+
+PROC vulkan_image_destroy( vulkan_image* arg ) -> void
+{
+    vkDestroyImage(
+        g_vulkan->logical_device, arg->platform_image, g_vulkan->vk_allocator );
+    // Free memory too
+    vulkan_memory_deallocate( &g_vulkan->device_memory, arg->memory );
+    // Nullify handle
+    *arg = {};
+};
 
 PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
 {

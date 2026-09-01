@@ -136,11 +136,16 @@ struct vulkan_heap
 
 struct vulkan_memory_entry
 {
+    /** What type of object we are storing in this memory entry
+
+     No object tpye means a free entry with no associated datae. */
+    e_vulkan_memory_object type;
     i64 block {};
     /* Where in the list the entry belongs to
        NOTE: This is a performance optimization index */
     i64 index {};
-    // Identifying position in the block this belongs to
+    /** Identifying position in the block this belongs to, or more generally,
+     * starting memory offset */
     i64 position {};
     /** Position before alignment */
     i64 reserved_position = false;
@@ -149,10 +154,6 @@ struct vulkan_memory_entry
     /** Size including extra implimentation bytes like alignment and redzones */
     i64 reserved_size {};
     i64 alignment = 1;
-    /** What type of object we are storing in this memory entry
-
-     No object tpye means a free entry with no associated device. */
-    e_vulkan_memory_object type;
 };
 
 using vulkan_memory_node = linked_list<vulkan_memory_entry>::t_node;
@@ -672,6 +673,9 @@ PROC vulkan_mesh_init( mesh* arg) -> fresult;
 
 PROC vulkan_image_init( render_image* arg ) -> monad<vulkan_image*>;
 
+/** Frees the handle and device memory associated, will also reset the entity. May lazy delete */
+PROC vulkan_image_destroy( vulkan_image* arg ) -> void;
+
 /** Allocates and initializes an depth buffer/image entity */
 PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>;
 
@@ -696,6 +700,12 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     type. */
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
 -> monad<vulkan_memory_entry>;
+
+/** Attempt to merge unused entries in each block */
+PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void;
+
+/** Deallocate entry from it's given block, may or may not perform coalescing */
+PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry allocation ) -> void;
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 
