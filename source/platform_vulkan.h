@@ -148,7 +148,7 @@ struct vulkan_memory_entry
      * starting memory offset */
     i64 position {};
     /** Position before alignment */
-    i64 reserved_position = false;
+    i64 reserved_position = 0;
     /** Bytes allocated to an actual object, 0 when free */
     i64 size {};
     /** Size including extra implimentation bytes like alignment and redzones */

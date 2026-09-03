@@ -1722,25 +1722,56 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void
     }
 }
 
-PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry allocation ) -> void
+PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry entry ) -> void
 {
-    vulkan_memory_block* block = &arg->blocks[ allocation.block ];
-    vulkan_memory_node* memory_node = block->entries[ allocation.index ].value;
+    vulkan_memory_block* block = &context->blocks[ entry.block ];
+    vulkan_memory_node* memory_node = block->entries[ entry.index ].value;
     vulkan_memory_entry* memory_entry = &memory_node->value;
     if (memory_node == nullptr)
     {   VULKAN_ERROR( "Tried to deallocate a null block: {} index: {}",
-                      allocation.block, allocation.index );
+                      entry.block, entry.index );
         return;
     }
     if (memory_entry->type == e_vulkan_memory_object::none)
     {   VULKAN_ERRORF( "Memory deallocate called on unallocated memory entry block: {} index: {} \n"
                        "This is not an error but is indicative of an issue with logic",
-                       allocation.block, allocation.index );
+                       entry.block, entry.index );
         return;
     }
-    // This sets the entry as free
+    // NOTE: This sets the entry as free
     memory_entry->type = e_vulkan_memory_object::none;
-    vulkan_memory_coalesce( arg );
+    // Reset non-reserve data, it's only meant for allocated objects, not tracking
+    memory_entry->position = 0;
+    memory_entry->size = 0;
+    memory_entry->alignment = 1;
+
+    // Try to merge with neighbours if possible
+    vulkan_memory_node* sentinel_node = &block->entries.nodes[ 0 ];
+    vulkan_memory_node* prev_node = &block->entries.nodes[ memory_node->prev ];
+    vulkan_memory_node* next_node = &block->entries.nodes[ memory_node->prev ];
+
+    /** NOTE: The invariants are a bit cleaner if we edit the current node or a
+     * new one, rather than attempting to awkward select which of 3 nodes to
+     * write to, that way only 1 node is ever "written to" and the rest are
+     * deleted. */
+    bool prev_valid = (prev_node != sentinel_node);
+    bool prev_unused = (prev_node->value.type == e_vulkan_memory_object::none);
+    if (prev_valid && prev_unused)
+    {
+        // Merge reserved size with preivous node
+        memory_entry->reserved_position = prev_node->value.reserved_position;
+        memory_entry->reserved_size += prev_node->value.reserved_size;
+        block->entries.remove_node( prev_node );
+    }
+    bool next_valid = (next_node != sentinel_node);
+    bool next_unused = (next_node->value.type == e_vulkan_memory_object::none);
+    if (next_valid && next_unused)
+    {
+        // Merge reserved size with next node
+        memory_entry->reserved_size += next_node->value.reserved_size;
+        block->entries.remove_node( next_node );
+    }
+    vulkan_memory_coalesce( context );
 }
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
