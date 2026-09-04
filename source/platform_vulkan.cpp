@@ -1437,7 +1437,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     // TODO: This is kind of a hack to try to evade pointer invalidation issues, this needs to
     // be fixed in a more sophisticated way
     new_block->entries.nodes = {};
-    new_block->entries.nodes.resize( 4096 );
+    new_block->entries.resize( 4096 );
 
     vulkan_memory_entry start_entry = {
         .type = e_vulkan_memory_object::none,
@@ -1651,9 +1651,7 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         }
         /* Space found, split the entry into 2, one unallocated and one allocated entry
            NOTE: Keep the original allocation in it's original index for free list convenient
-           and insert the new entry before it
-
-           NOTE: I messed up here previously and tried */
+           and insert the new entry before it*/
         vulkan_memory_node* space_entry = x_entry;
         vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
         // Copy the old data over and then we'll write over it
@@ -1690,7 +1688,17 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         };
         result.value = new_entry->value;
         result.error = false;
-        // Exit the loop
+
+        auto& entry = new_entry->value;
+        VULKAN_LOGF(
+            "Allocated untyped Vulkan memory block. block id: {}, entry index: {}",
+            entry.block, entry.index
+        );
+        VULKAN_LOGF(
+            "position in block: {} size: {} reserved_position: {} reserved_size: {} alignment {}",
+            entry.position, entry.size, entry.reserved_position, entry.reserved_size, entry.alignment
+        );
+        // Exit the loop, we allocated successfully
         break;
     }
     if (result.error)
