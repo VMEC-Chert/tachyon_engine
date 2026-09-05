@@ -952,6 +952,27 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
     VkAllocationCallbacks allocator = vulkan_allocator_create_callbacks(
         g_vulkan->allocator );
 
+    /** NOTE: X11 doesn't allow dynamic surface presentation so we have to *
+        re-create the swapchain every time it's resized
+
+        NOTE: Other platforms might be the same but Wayland doesn't, I haven't
+        encoutnered any issue with Windows yet, Mac and Android is untested.
+
+        NOTE: I tried to do this directly before creating the framebuffer but
+        rather awkwardly I need ot pass it down to framebuffer images beforehand
+        or doing t his is nonsense and vulkan throws error
+        https://docs.vulkan.org/spec/latest/chapters/renderpass.html#VUID-VkFramebufferCreateInfo-flags-04534*/
+    bool requires_exact_surface_size = (g_render->window_platform == e_window_platform::x11);
+    if (requires_exact_surface_size)
+    {   VkSurfaceCapabilitiesKHR surface_capabilities {};
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+            g_vulkan->device, g_vulkan->surface, &surface_capabilities );
+        // Update the internal present size we're using
+        arg->vk_present_size = VkExtent2D{ surface_capabilities.currentExtent };
+        VULKAN_LOGF( "Surface Height {} Present Height {}",
+                     surface_capabilities.currentExtent.height, arg->vk_present_size.height );
+    }
+
     arg->image_acquire_semaphores.resize( 3 );
     VkSemaphoreCreateInfo semaphore_args {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -1182,18 +1203,6 @@ PROC vulkan_swapchain_init( vulkan_swapchain* arg, VkSwapchainKHR reuse_swapchai
             swapchain_image_views[i],
             arg->depth_image_views[i]
         };
-
-        /** NOTE: X11 doesn't allow dynamic surface presentation so we have to
-         * re-create the swapchain every time it's resized */
-        bool requires_exact_surface_size = (g_render->window_platform == e_window_platform::x11);
-        if (requires_exact_surface_size)
-        {   VkSurfaceCapabilitiesKHR surface_capabilities {};
-            vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-                g_vulkan->device, g_vulkan->surface, &surface_capabilities );
-            arg->vk_present_size = VkExtent2D{ surface_capabilities.currentExtent };
-            VULKAN_LOGF( "Surface Height {} Present Height {}",
-                         surface_capabilities.currentExtent.height, arg->vk_present_size.height );
-        }
 
         VkFramebufferCreateInfo framebuffer_args{};
         framebuffer_args.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -2089,6 +2098,7 @@ PROC vulkan_render_target_init( vulkan_render_target* arg ) -> fresult
 PROC vulkan_image_depth_allocate() -> monad<vulkan_image*>
 {
     monad<vulkan_image*> result;
+
      VkImageCreateInfo image_args {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
