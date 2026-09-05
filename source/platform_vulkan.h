@@ -85,7 +85,6 @@ struct vulkan_swapchain
     uid id;
     fstring name = "unnamed";
     VkSwapchainKHR platform_swapchain;
-    VkFramebuffer platform_framebuffer;
     /** Vulkan dependant size of presentable surface, often close to window size.
     ultra pedantic about timing and exact size on most platforms. */
     VkExtent2D present_size;

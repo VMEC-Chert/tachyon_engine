@@ -1223,11 +1223,6 @@ PROC vulkan_swapchain_destroy( vulkan_swapchain* arg ) -> void
     // Can't destroy resources that are still in use
     // TODO: What??? Do we not need device wait idle???
     vkDeviceWaitIdle( g_vulkan->logical_device );
-    vkDestroyFramebuffer(
-        g_vulkan->logical_device,
-        arg->platform_framebuffer,
-        g_vulkan->vk_allocator
-    );
     // TODO: Switch size to using n_images
     for (i32 i=0; i < arg->image_views.size(); ++i)
     {
@@ -1733,7 +1728,7 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void
 PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry entry ) -> void
 {
     vulkan_memory_block* block = &context->blocks[ entry.block ];
-    vulkan_memory_node* memory_node = block->entries[ entry.index ].value;
+    vulkan_memory_node* memory_node = &block->entries.nodes[ entry.index ];
     vulkan_memory_entry* memory_entry = &memory_node->value;
     if (memory_node == nullptr)
     {   VULKAN_ERROR( "Tried to deallocate a null block: {} index: {}",
@@ -1780,6 +1775,8 @@ PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry
         block->entries.remove_node( next_node );
     }
     vulkan_memory_coalesce( context );
+    VULKAN_LOGF( "Deallocated Vulkan memory entry, block_id: {} entry index: {} size {}",
+                 entry.block, entry.index, entry.size );
 }
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
