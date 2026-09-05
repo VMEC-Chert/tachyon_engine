@@ -55,6 +55,19 @@ auto  VKAPI_CALL vulkan_debug_callback(
         default:
             TYON_BASE_LOGF( "Vulkan unknown_debug_category", "{}", callback_data->pMessage );
     }
+
+    i32 i_limit = callback_data->objectCount;
+    if (i_limit)
+    {       VULKAN_LOGF( "Related message objects: {}", i_limit ); }
+    for (i32 i=0; i < i_limit; ++i)
+    {
+        const auto& object = callback_data->pObjects[i];
+        fstring_view name = (object.pObjectName ? object.pObjectName : "<unnamed>" );
+        VULKAN_LOGF(
+            "type: {} handle: {:x} name {}",
+            string_VkObjectType( object.objectType ), object.objectHandle, name
+        );
+    }
     if (debug_break) { TYON_BREAK(); }
     return VK_FALSE;
 }
