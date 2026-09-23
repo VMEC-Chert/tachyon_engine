@@ -1428,6 +1428,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     memory_args.memoryTypeIndex = arg->memory_type_index;
 
     vulkan_memory_block* new_block = &context->blocks.push_tail({});
+    i64 block_i = (context->blocks.size() - 1);
 
     // Actually allocate the block
     auto memory_bad = vkAllocateMemory(
@@ -1458,7 +1459,7 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
 
     vulkan_memory_entry start_entry = {
         .type = e_vulkan_memory_object::none,
-        .block = (context->blocks.size() - 1),
+        .block = block_i,
         .index = 0,
         .position = 0,
         // NOTE: Size is only the actively used bytes, unallocated entries have size as 0
@@ -1466,9 +1467,11 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
         .reserved_size = arg->size,
         .alignment = 1,
     };
-    // Add entry to the list and free list
-    auto start_node = new_block->entries.push_tail( start_entry );
-    new_block->free_entries.push_tail( start_node->index );
+    /** Add the initial entry to the list
+     NOTE: Remembering to get everything right is a bit tricky so a small helper function was made to register operations made. Most things still need to done manually which is why this we're using a post-registering instead of allocate-and-use schema */
+    ERROR_GUARD( new_block->entries.list_size == 0, "Likely accidentilly reused an old block struct" );
+    pointer< vulkan_memory_node > start_node = new_block->entries.push_tail( new_entry );
+    vulkan_memory_register_node( context, start_node );
 
     vulkan_label_object( (u64)new_block->memory, VK_OBJECT_TYPE_DEVICE_MEMORY, "device_memory_block" );
     VULKAN_LOGF( "Allocated device memory block. Size: {:>10}", new_block->size );
@@ -1617,7 +1620,7 @@ PROC vulkan_memory_get_block( vulkan_memory* context, vulkan_memory_entry* entry
 PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_args args )
     -> monad<vulkan_memory_entry>
 {
-    monad<vulkan_memory_entry> result;
+    monad<vulkan_memory_entry> result {};
     result.error = true;
     VULKAN_LOGF( "Trying to allocate untyped memory size: {}", args.size );
 
@@ -1625,6 +1628,10 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
     i32 attempts_limit = 3;
     for (; i_attempts < attempts_limit; ++i_attempts)
     {
+        if (i_attempts >= attempts_limit - 1 )
+        {   TYON_BREAK();
+            // TODO: temporary code
+        }
         // NOTE: We need extra bytes for internal things like alignment and redzone so we use this
         i64 target_size = (args.size + context->redzone_bytes);
         // File suitible block
@@ -1637,22 +1644,9 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         vulkan_memory_block* target_block = block_search.match;
 
         // Find free entry in list
-        i64 list_size = (target_block ? target_block->free_entries.size() : 0);
-        vulkan_memory_node* x_entry = nullptr;
-        bool space_found = false;
-        for (i64 i=0; i < list_size; ++i)
-        {
-            // Walk in backwards order to take advantage of free entries being added to the end
-            const i64 i_inverse = (list_size - 1 - i);
-            const i64 entry_index = target_block->free_entries[ i_inverse ];
-            x_entry = target_block->entries.nodes.address( entry_index );
-            if (x_entry->value.reserved_size >= target_size)
-            {   ERROR_GUARD( x_entry->value.type == e_vulkan_memory_object::none,
-                             "A filled type implies we're trying to used an already used entry" );
-                space_found = true;
-                break;
-            }
-        }
+        pointer<vulkan_memory_entry> memory_node = vulkan_memory_allocate_node( context, args );
+
+        bool space_found = memory_node;
         if (space_found == false)
         {
             // No space, try to allocate a new block
@@ -1666,57 +1660,57 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             vulkan_memory_allocate_block( context, &block_args );
             continue;
         }
-        /* Space found, split the entry into 2, one unallocated and one allocated entry
-           NOTE: Keep the original allocation in it's original index for free list convenient
-           and insert the new entry before it*/
-        vulkan_memory_node* space_entry = x_entry;
-        vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
-        // Copy the old data over and then we'll write over it
-        vulkan_memory_entry old_entry = space_entry->value;
+        // /* Space found, split the entry into 2, one unallocated and one allocated entry
+        //    NOTE: Keep the original allocation in it's original index for free list convenient
+        //    and insert the new entry before it*/
+        // vulkan_memory_node* space_entry = x_entry;
+        // vulkan_memory_node* new_entry = target_block->entries.insert_before( x_entry, {});
+        // // Copy the old data over and then we'll write over it
+        // vulkan_memory_entry old_entry = space_entry->value;
 
-        i64 aligned_size = target_size + memory_padding( args.alignment, old_entry.position );
+        // i64 aligned_size = target_size + memory_padding( args.alignment, old_entry.position );
 
-        // Move the space to the next node
-        space_entry->value = {
-            .block = old_entry.block,
-            .index = space_entry->value.index,
-            // Move the position up by the allocated space
-            .position = (old_entry.reserved_position + aligned_size),
-            // Position before alignment
-            .reserved_position = (old_entry.reserved_position + aligned_size),
-            // Allocated size is still 0
-            .size = 0,
-            // NOTE: Internal used bytes after alignment and redzone
-            // NOTE: Shrink the reserved space by the total used space
-            .reserved_size = ( old_entry.reserved_size - aligned_size),
-            .alignment = 1
-        };
-        // TODO: Don't know how to handle alignment here, this is an offset so what is "aligned"?
-        // Is new Vulkan memory objects it just auto aligned to 64 bytes always?
-        new_entry->value = {
-            .block = old_entry.block,
-            .index = new_entry->index,
-            .position = (memory_align( old_entry.position, clamp_i32(args.alignment) )),
-            .reserved_position = old_entry.position,
-            // The actual size allocated for the object
-            .size = args.size,
-            .reserved_size = aligned_size,
-            .alignment = args.alignment
-        };
-        result.value = new_entry->value;
-        result.error = false;
+        // // Move the space to the next node
+        // space_entry->value = {
+        //     .block = old_entry.block,
+        //     .index = space_entry->value.index,
+        //     // Move the position up by the allocated space
+        //     .position = (old_entry.reserved_position + aligned_size),
+        //     // Position before alignment
+        //     .reserved_position = (old_entry.reserved_position + aligned_size),
+        //     // Allocated size is still 0
+        //     .size = 0,
+        //     // NOTE: Internal used bytes after alignment and redzone
+        //     // NOTE: Shrink the reserved space by the total used space
+        //     .reserved_size = ( old_entry.reserved_size - aligned_size),
+        //     .alignment = 1
+        // };
+        // // TODO: Don't know how to handle alignment here, this is an offset so what is "aligned"?
+        // // Is new Vulkan memory objects it just auto aligned to 64 bytes always?
+        // new_entry->value = {
+        //     .block = old_entry.block,
+        //     .index = new_entry->index,
+        //     .position = (memory_align( old_entry.position, clamp_i32(args.alignment) )),
+        //     .reserved_position = old_entry.position,
+        //     // The actual size allocated for the object
+        //     .size = args.size,
+        //     .reserved_size = aligned_size,
+        //     .alignment = args.alignment
+        // };
+        // result.value = new_entry->value;
+        // result.error = false;
 
-        auto& entry = new_entry->value;
-        VULKAN_LOGF(
-            "Allocated untyped Vulkan memory block. block id: {}, entry index: {}",
-            entry.block, entry.index
-        );
-        VULKAN_LOGF(
-            "position in block: {} size: {} reserved_position: {} reserved_size: {} alignment {}",
-            entry.position, entry.size, entry.reserved_position, entry.reserved_size, entry.alignment
-        );
-        // Exit the loop, we allocated successfully
-        break;
+        // auto& entry = new_entry->value;
+        // VULKAN_LOGF(
+        //     "Allocated untyped Vulkan memory block. block id: {}, entry index: {}",
+        //     entry.block, entry.index
+        // );
+        // VULKAN_LOGF(
+        //     "position in block: {} size: {} reserved_position: {} reserved_size: {} alignment {}",
+        //     entry.position, entry.size, entry.reserved_position, entry.reserved_size, entry.alignment
+        // );
+        // // Exit the loop, we allocated successfully
+        // break;
     }
     if (result.error)
     {   VULKAN_ERROR( "Failed to suballocate untyped memory from device memory" );
@@ -1747,58 +1741,119 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void
     }
 }
 
-PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry entry ) -> void
+PROC vulkan_memory_entry_mark_used(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> node ) -> fresult
 {
-    vulkan_memory_block* block = &context->blocks[ entry.block ];
-    vulkan_memory_node* memory_node = &block->entries.nodes[ entry.index ];
-    vulkan_memory_entry* memory_entry = &memory_node->value;
-    if (memory_node == nullptr)
-    {   VULKAN_ERROR( "Tried to deallocate a null block: {} index: {}",
-                      entry.block, entry.index );
-        return;
-    }
-    if (memory_entry->type == e_vulkan_memory_object::none)
-    {   VULKAN_ERRORF( "Memory deallocate called on unallocated memory entry block: {} index: {} \n"
-                       "This is not an error but is indicative of an issue with logic",
-                       entry.block, entry.index );
-        return;
-    }
-    // NOTE: This sets the entry as free
-    memory_entry->type = e_vulkan_memory_object::none;
-    // Reset non-reserve data, it's only meant for allocated objects, not tracking
-    memory_entry->position = 0;
-    memory_entry->size = 0;
-    memory_entry->alignment = 1;
+}
 
-    // Try to merge with neighbours if possible
-    vulkan_memory_node* sentinel_node = &block->entries.nodes[ 0 ];
-    vulkan_memory_node* prev_node = &block->entries.nodes[ memory_node->prev ];
-    vulkan_memory_node* next_node = &block->entries.nodes[ memory_node->prev ];
+PROC vulkan_memory_entery_mark_free(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> node ) -> fresult
+{
+    if (! node) { return false; }
+    if (node->value.type == e_vulkan_memory_object::none)  { return false; }
 
-    /** NOTE: The invariants are a bit cleaner if we edit the current node or a
-     * new one, rather than attempting to awkward select which of 3 nodes to
-     * write to, that way only 1 node is ever "written to" and the rest are
-     * deleted. */
-    bool prev_valid = (prev_node != sentinel_node);
-    bool prev_unused = (prev_node->value.type == e_vulkan_memory_object::none);
-    if (prev_valid && prev_unused)
+    pointer<vulkan_memory_block> block = memory->blocks[ node->block ];
+    if (! block) { return false; }
+    memory->free_entries.push_tail( node );
+}
+
+PROC vulkan_memory_split_entry(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> memory_node )
+    -> pointer< vulkan_memory_node >
+{
+}
+
+// PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry entry ) -> void
+// {
+//     vulkan_memory_block* block = &context->blocks[ entry.block ];
+//     vulkan_memory_node* memory_node = &block->entries.nodes[ entry.index ];
+//     vulkan_memory_entry* memory_entry = &memory_node->value;
+//     if (memory_node == nullptr)
+//     {   VULKAN_ERROR( "Tried to deallocate a null block: {} index: {}",
+//                       entry.block, entry.index );
+//         return;
+//     }
+//     if (memory_entry->type == e_vulkan_memory_object::none)
+//     {   VULKAN_ERRORF( "Memory deallocate called on unallocated memory entry block: {} index: {} \n"
+//                        "This is not an error but is indicative of an issue with logic",
+//                        entry.block, entry.index );
+//         return;
+//     }
+//     // NOTE: This sets the entry as free
+//     memory_entry->type = e_vulkan_memory_object::none;
+//     // Reset non-reserve data, it's only meant for allocated objects, not tracking
+//     memory_entry->position = 0;
+//     memory_entry->size = 0;
+//     memory_entry->alignment = 1;
+
+//     // Try to merge with neighbours if possible
+//     vulkan_memory_node* sentinel_node = &block->entries.nodes[ 0 ];
+//     vulkan_memory_node* prev_node = &block->entries.nodes[ memory_node->prev ];
+//     vulkan_memory_node* next_node = &block->entries.nodes[ memory_node->prev ];
+
+//     /** NOTE: The invariants are a bit cleaner if we edit the current node or a
+//      * new one, rather than attempting to awkward select which of 3 nodes to
+//      * write to, that way only 1 node is ever "written to" and the rest are
+//      * deleted. */
+//     bool prev_valid = (prev_node != sentinel_node);
+//     bool prev_unused = (prev_node->value.type == e_vulkan_memory_object::none);
+//     if (prev_valid && prev_unused)
+//     {
+//         // Merge reserved size with preivous node
+//         memory_entry->reserved_position = prev_node->value.reserved_position;
+//         memory_entry->reserved_size += prev_node->value.reserved_size;
+//         vulkan_memory_deallocate_nodee( context, block, prev_node );
+//     }
+//     bool next_valid = (next_node != sentinel_node);
+//     bool next_unused = (next_node->value.type == e_vulkan_memory_object::none);
+//     if (next_valid && next_unused)
+//     {
+//         // Merge reserved size with next node
+//         memory_entry->reserved_size += next_node->value.reserved_size;
+//         vulkan_memory_deallocate_nodee( context, block, next_node );
+//     }
+//     vulkan_memory_coalesce( context );
+//     VULKAN_LOGF( "Deallocated Vulkan memory entry, block_id: {} entry index: {} size {}",
+//                  entry.block, entry.index, entry.size );
+// }
+
+PROC vulkan_memory_search_suitible_node(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory> block, vulkan_allocate_args args )
+-> pointer<vulkan_memory_node>
+{
+    // TODO: Wtf is this code. I must've been sleep drunk
+    pointer<vulkan_memory_node> result;
+    vulkan_memory_node* x_entry = nullptr;
+
+    // NOTE: We're going to walk the free list for a suitible size in the block
+    i64 list_size = (target_block ? target_block->free_entries.size() : 0);
+    bool space_found = false;
+    for (i64 i=0; i < list_size; ++i)
     {
-        // Merge reserved size with preivous node
-        memory_entry->reserved_position = prev_node->value.reserved_position;
-        memory_entry->reserved_size += prev_node->value.reserved_size;
-        block->entries.remove_node( prev_node );
+        // Walk in backwards order to take advantage of free entries being added to the end
+        const i64 i_inverse = (list_size - 1 - i);
+        const i64 entry_index = target_block->free_entries[ i_inverse ];
+        x_entry = target_block->entries.nodes.address( entry_index );
+        if (x_entry->value.reserved_size >= target_size)
+        {   ERROR_GUARD( x_entry->value.type == e_vulkan_memory_object::none,
+                         "A filled type implies we're trying to used an already used entry" );
+            space_found = true;
+            break;
+        }
     }
-    bool next_valid = (next_node != sentinel_node);
-    bool next_unused = (next_node->value.type == e_vulkan_memory_object::none);
-    if (next_valid && next_unused)
-    {
-        // Merge reserved size with next node
-        memory_entry->reserved_size += next_node->value.reserved_size;
-        block->entries.remove_node( next_node );
+    i64 entry_id = block->free_entries.pop_tail().copy_default(-1);
+    if (entry_id >= 0)
+    {   result = block->entries.nodes[ entry_id ];
     }
-    vulkan_memory_coalesce( context );
-    VULKAN_LOGF( "Deallocated Vulkan memory entry, block_id: {} entry index: {} size {}",
-                 entry.block, entry.index, entry.size );
+    return result;
+}
+
+PROC vulkan_memory_deallocate_node(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory> block, pointer<vulkan_memory_node> entry ) -> void
+{
+    // NOTE: linked_list auto-zeros node
+    block->entries.remove_node( next_node );
+    block->entries.free_entries.push_tail( next_node );
 }
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult
@@ -2770,15 +2825,15 @@ PROC vulkan_init() -> fresult
     i32& graphics_queue_family = self->graphics_queue_family;
     i32& present_queue_family = self->present_queue_family;
 
-    g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
-        g_vulkan->allocator );
+    // g_vulkan->allocator_callback = vulkan_allocator_create_callbacks(
+    //     g_vulkan->allocator );
 
-    // Use command line argument to see if to disable custom allocator
-    auto allocator_arg = g_library->cmdline_arguments.linear_search(
-        []( cmdline_argument& arg ) {
-            return arg.name == "vulkan_disable_custom_allocator"; });
-    if (allocator_arg.match_found == false)
-    {   g_vulkan->vk_allocator = &g_vulkan->allocator_callback; }
+    // // Use command line argument to see if to disable custom allocator
+    // auto allocator_arg = g_library->cmdline_arguments.linear_search(
+    //     []( cmdline_argument& arg ) {
+    //         return arg.name == "vulkan_disable_custom_allocator"; });
+    // if (allocator_arg.match_found == false)
+    // {   g_vulkan->vk_allocator = &g_vulkan->allocator_callback; }
 
     defer_procedure _exit = [&result] {
         if (result)

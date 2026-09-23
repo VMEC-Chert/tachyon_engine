@@ -182,7 +182,7 @@ struct vulkan_memory_block
     bool host_mappable = false;
 
     linked_list< vulkan_memory_entry > entries;
-    array< i64  > free_entries;
+    // array< i64  > free_entries;
     i64 largest_entry = 0;
 };
 
@@ -219,6 +219,7 @@ struct vulkan_memory
 
     array< vulkan_object_memory_info > object_infos;
     array< vulkan_memory_block > blocks;
+    array< pointer<vulkan_memory_node> > free_entries;
 };
 
 struct vulkan_transfer
@@ -704,7 +705,40 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
 PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void;
 
 /** Deallocate entry from it's given block, may or may not perform coalescing */
-PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry allocation ) -> void;
+PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry* allocation )
+    -> pointer<vulkan_memory_node>;
+
+/** Uniform interface to help set up extra validation and tracking metadata that might be forgotten. */
+PROC vulkan_memory_entry_mark_used(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> args ) -> fresult;
+
+/** Uniform interface to help set up extra validation and tracking metadata that might be forgotten. */
+PROC vulkan_memory_entry_mark_free(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> args ) -> fresult;
+
+/* Create 2 free entries which redistributed memory allocations */
+PROC vulkan_memory_split_entry(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> memory_node )
+    -> pointer< vulkan_memory_node >;
+
+PROC vulkan_memory_join_entry(
+    pointer<vulkan_memory> memory,
+    pointer<vulkan_memory_node> left_node,
+    pointer<vulkan_memory_node> right_node
+)
+    -> pointer< vulkan_memory_node >;
+
+/** Find a suitible entry that fits the given memory entry
+    NOTE: We have to receive the allocate_args due to inimum size and alignment requirements
+*/
+PROC vulkan_memory_search_suitible_node(
+    pointer<vulkan_memory> memory, vulkan_memory_entry args )
+-> pointer<vulkan_memory_entry>;
+
+/** Remove a single memory entry from a block but don't mess with memory stateo
+    helper function to keep interface obvious */
+PROC vulkan_memory_deallocate_node(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory> block, pointer<vulkan_memory_entry> ) -> void;
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 
