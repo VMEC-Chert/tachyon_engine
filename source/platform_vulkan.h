@@ -182,6 +182,9 @@ struct vulkan_memory_block
     bool host_mappable = false;
 
     linked_list< vulkan_memory_entry > entries;
+    /** NOTE: Originally I had free-entries as a property of the block but it
+     * massively complicated managing the free store so I thought it was best to
+     * keep it together as an entity list like sytem */
     // array< i64  > free_entries;
     i64 largest_entry = 0;
 };
@@ -219,7 +222,7 @@ struct vulkan_memory
 
     array< vulkan_object_memory_info > object_infos;
     array< vulkan_memory_block > blocks;
-    array< pointer<vulkan_memory_node> > free_entries;
+    linked_list< vulkan_memory_entry* > free_entries;
 };
 
 struct vulkan_transfer
@@ -708,9 +711,11 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void;
 PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry* allocation )
     -> pointer<vulkan_memory_node>;
 
-/** Uniform interface to help set up extra validation and tracking metadata that might be forgotten. */
+/** Uniform interface to help set up extra validation and tracking metadata that might be forgotten.
+
+    NOTE: The free index is an indentifying position in vulkan_memory's free list */
 PROC vulkan_memory_entry_mark_used(
-    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> args ) -> fresult;
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> args, i64 free_index ) -> fresult;
 
 /** Uniform interface to help set up extra validation and tracking metadata that might be forgotten. */
 PROC vulkan_memory_entry_mark_free(

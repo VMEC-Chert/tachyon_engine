@@ -1742,8 +1742,16 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void
 }
 
 PROC vulkan_memory_entry_mark_used(
-    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> node ) -> fresult
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_node> node, i64 free_index ) -> fresult
 {
+    if (! node) { return false; }
+    if (node->value.type == e_vulkan_memory_object::none)  { return false; }
+
+    pointer<vulkan_memory_block> block = memory->blocks[ node->block ];
+    if (! block) { return false; }
+    if (block_free_index)
+    pointer<vulkan_memory_node> free_node = memory->free_entries.nodes[ free_index ];
+    memory->free_entries.remove_node( free_node );
 }
 
 PROC vulkan_memory_entery_mark_free(
