@@ -737,13 +737,9 @@ PROC vulkan_memory_join_entry(
     NOTE: We have to receive the allocate_args due to inimum size and alignment requirements
 */
 PROC vulkan_memory_search_suitible_node(
-    pointer<vulkan_memory> memory, vulkan_memory_entry args )
--> pointer<vulkan_memory_entry>;
+    pointer<vulkan_memory> memory, vulkan_allocate_args args )
+-> pointer<vulkan_memory_node>;
 
-/** Remove a single memory entry from a block but don't mess with memory stateo
-    helper function to keep interface obvious */
-PROC vulkan_memory_deallocate_node(
-    pointer<vulkan_memory> memory, pointer<vulkan_memory> block, pointer<vulkan_memory_entry> ) -> void;
 
 PROC vulkan_memory_allocate_buffer( vulkan_memory* arg, vulkan_buffer* buffer ) -> fresult;
 

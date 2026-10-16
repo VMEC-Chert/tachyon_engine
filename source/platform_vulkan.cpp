@@ -1470,8 +1470,8 @@ PROC vulkan_memory_allocate_block( vulkan_memory* context, vulkan_memory_block_a
     /** Add the initial entry to the list
      NOTE: Remembering to get everything right is a bit tricky so a small helper function was made to register operations made. Most things still need to done manually which is why this we're using a post-registering instead of allocate-and-use schema */
     ERROR_GUARD( new_block->entries.list_size == 0, "Likely accidentilly reused an old block struct" );
-    pointer< vulkan_memory_node > start_node = new_block->entries.push_tail( new_entry );
-    vulkan_memory_register_node( context, start_node );
+    pointer< vulkan_memory_node > start_node = new_block->entries.push_tail( start_entry );
+    vulkan_memory_entry_mark_free( context, start_node );
 
     vulkan_label_object( (u64)new_block->memory, VK_OBJECT_TYPE_DEVICE_MEMORY, "device_memory_block" );
     VULKAN_LOGF( "Allocated device memory block. Size: {:>10}", new_block->size );
@@ -1644,7 +1644,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
         vulkan_memory_block* target_block = block_search.match;
 
         // Find free entry in list
-        pointer<vulkan_memory_entry> memory_node = vulkan_memory_allocate_node( context, args );
+
+        pointer<vulkan_memory_node> memory_node = vulkan_memory_search_suitible_node( context, args );
 
         bool space_found = memory_node;
         if (space_found == false)
@@ -1660,6 +1661,8 @@ PROC vulkan_memory_allocate_untyped( vulkan_memory* context, vulkan_allocate_arg
             vulkan_memory_allocate_block( context, &block_args );
             continue;
         }
+
+        vulkan_memory_split_entry( context, memory_node );
         // /* Space found, split the entry into 2, one unallocated and one allocated entry
         //    NOTE: Keep the original allocation in it's original index for free list convenient
         //    and insert the new entry before it*/
@@ -1747,10 +1750,10 @@ PROC vulkan_memory_entry_mark_used(
     if (! node) { return false; }
     if (node->value.type == e_vulkan_memory_object::none)  { return false; }
 
-    pointer<vulkan_memory_block> block = memory->blocks[ node->block ];
+    pointer<vulkan_memory_block> block = &memory->blocks[ node->value.block ];
     if (! block) { return false; }
-    if (block_free_index)
-    pointer<vulkan_memory_node> free_node = memory->free_entries.nodes[ free_index ];
+    if (free_index)
+    pointer<vulkan_memory_node> free_node = &memory->free_entries.nodes[ free_index ];
     memory->free_entries.remove_node( free_node );
 }
 
@@ -1760,15 +1763,81 @@ PROC vulkan_memory_entery_mark_free(
     if (! node) { return false; }
     if (node->value.type == e_vulkan_memory_object::none)  { return false; }
 
-    pointer<vulkan_memory_block> block = memory->blocks[ node->block ];
+    pointer<vulkan_memory_block> block = &memory->blocks[ node->value.block ];
     if (! block) { return false; }
-    memory->free_entries.push_tail( node );
+    memory->free_entries.push_tail( node.get() );
 }
 
 PROC vulkan_memory_split_entry(
     pointer<vulkan_memory> memory, pointer<vulkan_memory_node> memory_node )
     -> pointer< vulkan_memory_node >
 {
+    PROC vulkan_memory_allocate_untyped(
+    vulkan_memory* context,
+    vulkan_allocate_args args
+) -> monad<vulkan_memory_entry>
+{
+    monad<vulkan_memory_entry> result;
+    result.error = true;
+
+    i32 attempts_limit = 3;
+    for (i32 i = 0; i < attempts_limit; ++i)
+    {
+        // 1. Find a block that has enough total space
+        search_result<vulkan_memory_block> block_search = context->blocks.linear_search(
+            [args] (vulkan_memory_block& block) {
+                return (block.largest_entry >= args.size &&
+                        block.memory_type_index == args.memory_type_index);
+            });
+
+        if (!block_search.match_found) continue;
+
+        vulkan_memory_block* target_block = block_search.match;
+
+        // 2. Find a specific entry in that block that fits our size + alignment
+        // (In a real allocator, you'd search the free list for a node where:
+        //  node.position % alignment == 0 AND node.reserved_size >= args.size + alignment_padding)
+        pointer<vulkan_memory_node> memory_node = vulkan_memory_search_suitible_node(
+            context, target_block, args
+        );
+
+        if (memory_node)
+        {
+            // 3. Calculate the actual offset considering alignment
+            i64 aligned_position = memory_align(memory_node->value.position, args.alignment);
+            i64 alignment_padding = aligned_position - memory_node->value.position;
+            i64 total_needed = args.size + alignment_padding;
+
+            // Check if we have enough room for the padding too
+            if (memory_node->value.reserved_size < total_needed) continue;
+
+            // 4. Update the node to reflect our actual allocation
+            // We move the position to the aligned start and update the size
+            memory_node->value.position = aligned_position;
+            memory_node->value.size = args.size;
+            memory_node->value.reserved_size += alignment_padding; // Increase reserved to account for padding
+
+            // 5. Split the node to create a new free node for the remainder
+            vulkan_memory_split_entry(context, memory_node);
+
+            // 6. Return the successful allocation
+            vulkan_memory_entry success_entry = memory_node->value;
+            // Important: Set type here so it's no longer considered "free"
+            // (This should ideally be set by the caller, but we do it for safety)
+            // success_entry.type = ...
+
+            result.value = success_entry;
+            result.error = false;
+            return result;
+        }
+        else
+        {
+            // No suitable node in this block, try to allocate a new block (handled by loop/logic)
+            // In a real engine, you'd likely trigger a new block allocation here.
+        }
+    }
+
+    return result;
 }
 
 // PROC vulkan_memory_deallocate( vulkan_memory* context, const vulkan_memory_entry entry ) -> void
@@ -1830,30 +1899,31 @@ PROC vulkan_memory_search_suitible_node(
 -> pointer<vulkan_memory_node>
 {
     // TODO: Wtf is this code. I must've been sleep drunk
-    pointer<vulkan_memory_node> result;
-    vulkan_memory_node* x_entry = nullptr;
+    // pointer<vulkan_memory_node> result;
+    // vulkan_memory_node* x_entry = nullptr;
 
-    // NOTE: We're going to walk the free list for a suitible size in the block
-    i64 list_size = (target_block ? target_block->free_entries.size() : 0);
-    bool space_found = false;
-    for (i64 i=0; i < list_size; ++i)
-    {
-        // Walk in backwards order to take advantage of free entries being added to the end
-        const i64 i_inverse = (list_size - 1 - i);
-        const i64 entry_index = target_block->free_entries[ i_inverse ];
-        x_entry = target_block->entries.nodes.address( entry_index );
-        if (x_entry->value.reserved_size >= target_size)
-        {   ERROR_GUARD( x_entry->value.type == e_vulkan_memory_object::none,
-                         "A filled type implies we're trying to used an already used entry" );
-            space_found = true;
-            break;
-        }
-    }
-    i64 entry_id = block->free_entries.pop_tail().copy_default(-1);
-    if (entry_id >= 0)
-    {   result = block->entries.nodes[ entry_id ];
-    }
-    return result;
+    // // NOTE: We're going to walk the free list for a suitible size in the block
+    // i64 list_size = (target_block ? target_block->free_entries.size() : 0);
+    // bool space_found = false;
+    // for (i64 i=0; i < list_size; ++i)
+    // {
+    //     // Walk in backwards order to take advantage of free entries being added to the end
+    //     const i64 i_inverse = (list_size - 1 - i);
+    //     const i64 entry_index = target_block->free_entries[ i_inverse ];
+    //     x_entry = target_block->entries.nodes.address( entry_index );
+    //     if (x_entry->value.reserved_size >= target_size)
+    //     {   ERROR_GUARD( x_entry->value.type == e_vulkan_memory_object::none,
+    //                      "A filled type implies we're trying to used an already used entry" );
+    //         space_found = true;
+    //         break;
+    //     }
+    // }
+    // i64 entry_id = block->free_entries.pop_tail().copy_default(-1);
+    // if (entry_id >= 0)
+    // {   result = block->entries.nodes[ entry_id ];
+    // }
+    // return result;
+    return {};
 }
 
 PROC vulkan_memory_deallocate_node(
@@ -2125,7 +2195,7 @@ PROC vulkan_image_destroy( vulkan_image* arg ) -> void
     vkDestroyImage(
         g_vulkan->logical_device, arg->platform_image, g_vulkan->vk_allocator );
     // Free memory too
-    vulkan_memory_deallocate( &g_vulkan->device_memory, arg->memory );
+    vulkan_memory_deallocate( &g_vulkan->device_memory, &arg->memory );
     // Nullify handle
     *arg = {};
 };
