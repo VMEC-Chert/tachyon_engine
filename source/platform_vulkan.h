@@ -155,7 +155,8 @@ struct vulkan_memory_entry
     i64 alignment = 1;
 };
 
-using vulkan_memory_node = linked_list<vulkan_memory_entry>::t_node;
+using vulkan_memory_node = node_link<vulkan_memory_entry>;
+using vulkan_memory_free_node = node_link<vulkan_memory_entry*> ;
 
 struct vulkan_memory_block_args
 {
@@ -711,6 +712,10 @@ PROC vulkan_memory_coalesce( vulkan_memory* arg ) -> void;
 PROC vulkan_memory_deallocate( vulkan_memory* arg, vulkan_memory_entry* allocation )
     -> pointer<vulkan_memory_node>;
 
+PROC vulkan_memory_search_suitible_node(
+    pointer<vulkan_memory> memory, pointer<vulkan_memory> block, vulkan_allocate_args args )
+-> pointer<vulkan_memory_node>;
+
 /** Uniform interface to help set up extra validation and tracking metadata that might be forgotten.
 
     NOTE: The free index is an indentifying position in vulkan_memory's free list */
@@ -737,7 +742,7 @@ PROC vulkan_memory_join_entry(
     NOTE: We have to receive the allocate_args due to inimum size and alignment requirements
 */
 PROC vulkan_memory_search_suitible_node(
-    pointer<vulkan_memory> memory, vulkan_allocate_args args )
+    pointer<vulkan_memory> memory, pointer<vulkan_memory_block> block, vulkan_allocate_args args )
 -> pointer<vulkan_memory_node>;
 
 
